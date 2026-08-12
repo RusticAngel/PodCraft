@@ -4,6 +4,7 @@ import wave
 from typing import Optional
 from src.config import Config
 from src.utils.file_handlers import stable_token, ensure_dirs
+from src.utils.api_retry import call_with_retry
 
 
 class GeminiTTSTool:
@@ -32,7 +33,11 @@ class GeminiTTSTool:
         return bool(self.api_key)
 
     def generate_speech(self, text: str, voice: str = None) -> Optional[str]:
-        """Generate speech audio from text. Returns a WAV/MP3 path or None."""
+        """Generate speech audio from text. Returns a WAV/MP3 path or None.
+
+        Caches by (text, voice): if a matching file already exists on disk
+        it is reused, so repeated runs don't consume daily TTS quota.
+        """
         if not self.configured:
             print("TTS skipped: GEMINI_API_KEY not configured")
             return None
@@ -40,9 +45,15 @@ class GeminiTTSTool:
         voice = voice or Config.DEFAULT_VOICE
         ensure_dirs(Config.OUTPUT_DIR)
 
+        token = stable_token(text, voice)
+        cached = os.path.join(Config.OUTPUT_DIR, f"speech_{token}.wav")
+        if os.path.exists(cached):
+            print("TTS: using cached audio")
+            return cached
+
         try:
             client = self._get_client()
-            response = client.models.generate_content(
+            response = call_with_retry(lambda: client.models.generate_content(
                 model=self.model,
                 contents=text,
                 config={
@@ -55,7 +66,7 @@ class GeminiTTSTool:
                         }
                     },
                 },
-            )
+            ))
 
             mime_type = None
             audio_data = None
@@ -69,7 +80,7 @@ class GeminiTTSTool:
                 print("TTS response contained no audio data")
                 return None
 
-            return self._write_audio(audio_data, mime_type, stable_token(text, voice))
+            return self._write_audio(audio_data, mime_type, token)
 
         except Exception as e:
             print(f"TTS error: {e}")

@@ -3,6 +3,7 @@ from typing import Optional
 from src.config import Config
 from src.tools.audio_utils import synth_placeholder_wav
 from src.utils.file_handlers import stable_token, ensure_dirs
+from src.utils.api_retry import call_with_retry
 
 
 class LyriaMusicTool:
@@ -51,11 +52,11 @@ class LyriaMusicTool:
                 "for a podcast, gentle piano and soft strings, no vocals, "
                 "professional mastering quality."
             )
-            response = client.models.generate_content(
+            response = call_with_retry(lambda: client.models.generate_content(
                 model=self.model,
                 contents=prompt,
                 config={"response_modalities": ["AUDIO"]},
-            )
+            ))
 
             audio_data = None
             mime_type = "audio/mpeg"

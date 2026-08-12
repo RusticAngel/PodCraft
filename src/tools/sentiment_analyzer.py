@@ -1,6 +1,7 @@
 import os
 from typing import Dict
 from src.config import Config
+from src.utils.api_retry import call_with_retry
 
 
 class SentimentAnalyzerTool:
@@ -45,11 +46,11 @@ class SentimentAnalyzerTool:
             - audience_engagement: rating 1-10
             - recommendations: list of suggestions
             """
-            response = client.models.generate_content(
+            response = call_with_retry(lambda: client.models.generate_content(
                 model=self.model,
                 contents=prompt,
                 config=types.GenerateContentConfig(response_modalities=["TEXT"]),
-            )
+            ))
             return {
                 "analysis": response.text,
                 "overall_tone": "positive",
