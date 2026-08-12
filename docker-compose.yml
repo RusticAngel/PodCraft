@@ -1,0 +1,16 @@
+services:
+  podcraft:
+    build: .
+    container_name: podcraft
+    ports:
+      - "8000:8000"
+    environment:
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - PARALLEL_API_KEY=${PARALLEL_API_KEY}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+    volumes:
+      - ./uploads:/app/uploads
+      - ./outputs:/app/outputs
+      - ./credentials.json:/app/credentials.json:ro
+    restart: unless-stopped

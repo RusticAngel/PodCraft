@@ -1,0 +1,1 @@
+"""Phase 3 - partner API integration (Parallel Search)."""
