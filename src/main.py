@@ -54,6 +54,9 @@ async def root():
 async def upload_script(
     file: UploadFile = File(...),
     genre: str = Query("general", description="Podcast genre for market research"),
+    max_segments: Optional[int] = Query(
+        None, ge=1, description="Lite mode: render at most N dialogue segments to save TTS quota"
+    ),
 ):
     """Upload a podcast script PDF and start production."""
     try:
@@ -63,7 +66,7 @@ async def upload_script(
         upload_path = _save_upload(file)
 
         orchestrator = get_orchestrator()
-        result = orchestrator.process_script(upload_path, genre)
+        result = orchestrator.process_script(upload_path, genre, max_segments)
 
         return JSONResponse({
             "status": "success",

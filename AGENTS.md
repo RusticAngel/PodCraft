@@ -97,6 +97,7 @@ Purpose: preserve free-tier daily TTS quota during demos (Lyria is hard-quota'd 
 ## Current git state
 - Branch `main`, clean upstream (origin/main in sync). Last commits: "Initial PodCraft release" → "Add API retry with backoff, TTS caching, and smoke-test script".
 - **Uncommitted work in progress**: `src/phase4_adk_agents/audio_producer_agent.py` and `orchestrator.py` — the `max_segments` lite-mode feature (see above). Tests still pass with it; verified live end-to-end (3 segments, TTS produced real WAVs, Lyria fell back).
+- `/upload` accepts optional `?max_segments=N` **query param** (FastAPI `Query`, so curl must send it in the URL string, NOT as `-F` form field) → wires the existing lite-mode from the API so demos render only N segments. Verified: `?max_segments=3` → segs 0/3/6, `lite_mode=True`.
 - `.env` is gitignored; don't commit it. Never log `GEMINI_API_KEY`.
 
 ## Gotchas / notes
