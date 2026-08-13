@@ -26,6 +26,7 @@ def service_yaml(
         {"name": "GEMINI_MODEL", "value": os.getenv("GEMINI_MODEL", "gemini-3.5-flash")},
         {"name": "DEFAULT_TTS_VOICE", "value": os.getenv("DEFAULT_TTS_VOICE", "Puck")},
         {"name": "SECONDARY_TTS_VOICE", "value": os.getenv("SECONDARY_TTS_VOICE", "Charon")},
+        {"name": "PARALLEL_API_KEY", "value": os.getenv("PARALLEL_API_KEY", "")},
         {"name": secret_env_name, "valueFrom": {"secretKeyRef": {"name": secret_ref, "key": "latest"}}},
     ]
     spec = {
@@ -41,7 +42,7 @@ def service_yaml(
                         {
                             "image": image,
                             "env": env,
-                            "ports": [{"containerPort": 8000}],
+                            "ports": [{"containerPort": 8080}],
                             "resources": {"limits": {"memory": "512Mi", "cpu": "1"}},
                         }
                     ],
@@ -62,7 +63,8 @@ def deploy_cmd(project_id: str, dir_path: str = ".") -> str:
     return (
         f"gcloud builds submit --config=cloudbuild.yaml . && "
         f"gcloud run deploy {SERVICE_NAME} --image {image} --region {REGION} "
-        f"--set-secrets=GEMINI_API_KEY=gemini-api-key:latest --allow-unauthenticated"
+        f"--set-secrets=GEMINI_API_KEY=gemini-api-key:latest --allow-unauthenticated "
+        f"--min-instances=1"
     )
 
 

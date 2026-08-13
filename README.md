@@ -134,8 +134,10 @@ All tests are mocked and require no API keys.
    gcloud run deploy podcraft \
      --source . \
      --region us-central1 \
-     --set-secrets GEMINI_API_KEY=gemini-key:latest
+     --set-secrets GEMINI_API_KEY=gemini-key:latest \
+     --min-instances=1
    ```
+   `--min-instances=1` keeps one warm instance so cold starts don't stall demos, and keeps the container-local `./outputs` (generated WAVs + pack zip) available for `/download`.
 
 ### Required API Keys
 

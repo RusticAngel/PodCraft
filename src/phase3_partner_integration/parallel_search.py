@@ -8,6 +8,13 @@ except Exception:  # pragma: no cover - package may not be installed
     _HAS_PARALLEL_WEB = False
 
 try:
+    # parallel-web 1.2.0+ exposes the client as `parallel.Parallel`
+    from parallel import Parallel as _ParallelSearchClient  # type: ignore
+    _HAS_PARALLEL_WEB = True
+except Exception:  # pragma: no cover
+    pass
+
+try:
     import requests
     _HAS_REQUESTS = True
 except Exception:  # pragma: no cover
@@ -71,8 +78,10 @@ class ParallelResearchTool:
             search_queries=[query],
             mode="turbo",
         )
-        raw = response.get("results") if isinstance(response, dict) else response
-        return self._normalize(raw)[:max_results]
+        raw = response.get("results") if isinstance(response, dict) else getattr(response, "results", None)
+        if isinstance(raw, list):
+            return self._normalize(raw)[:max_results]
+        return self._normalize([])[:max_results]
 
     def _search_http(self, query: str, max_results: int) -> List[Dict]:
         response = requests.post(
@@ -100,11 +109,16 @@ class ParallelResearchTool:
         normalized = []
         for r in raw_results:
             if not isinstance(r, dict):
+                model_dump = getattr(r, "model_dump", None)
+                r = model_dump() if callable(model_dump) else None
+            if not isinstance(r, dict):
                 continue
+            excerpts = r.get("excerpts") or []
+            snippet = " ".join(excerpts)[:500] if isinstance(excerpts, list) else (excerpts or "")
             normalized.append({
                 "title": r.get("title", ""),
                 "url": r.get("url", ""),
-                "snippet": r.get("snippet", "") or r.get("description", ""),
-                "published_date": r.get("published_date", "") or r.get("date", ""),
+                "snippet": snippet or r.get("snippet", "") or r.get("description", ""),
+                "published_date": r.get("publish_date", "") or r.get("published_date", "") or r.get("date", ""),
             })
         return normalized

@@ -107,7 +107,7 @@ Purpose: preserve free-tier daily TTS quota during demos (Lyria is hard-quota'd 
 - `SMOKE TEST` script: `scripts/test_api.ps1` — starts uvicorn, hits `/health`, `/analyze`, `/upload`, `/download`, then stops server. The README mentions a "smoke-test script" in the Docker section — that's what it refers to.
 - Model names in `.env.example`: `GEMINI_MODEL=gemini-3.5-flash` and `GEMINI_TTS_MODEL=gemini-2.5-flash-preview-tts`. Older check snippets online reference `gemini-2.0-flash-exp` — use the project config instead.
 - `parallel_web` SDK is imported optionally in `parallel_search.py`; falls back to `requests` HTTP if absent. Neither key is needed for tests.
-- Deployment files: `Dockerfile` (python:3.11-slim + ffmpeg/libsndfile), `docker-compose.yml`, `src/phase5_deployment/*`.
+- Deployment files: `Dockerfile` (python:3.11-slim + ffmpeg/libsndfile), `docker-compose.yml`, `src/phase5_deployment/*`. Deploy with `--min-instances=1` so one warm instance keeps `./outputs` (WAVs + pack) available for `/download` and avoids cold-start stalls in the demo; `cloud_run.py` `deploy_cmd()` already includes it.
 
 ## OpenCode config for this repo (ADDED 2026-08-13)
 

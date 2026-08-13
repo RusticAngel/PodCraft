@@ -20,7 +20,7 @@ PodCraft replaces that manual pipeline with an agentic system. Upload a script o
 
 ### How It's Built
 - **Gemini (Google Cloud)** — all agent reasoning (`gemini-3.5-flash`), speech generation (`gemini-2.5-flash-preview-tts`), and sentiment analysis
-- **Google Cloud Agent Engine (ADK)** — multi-agent orchestration via `google-cloud-aiplatform[agent_engines,adk]`
+- **Google Cloud Agent Engine (ADK)** — multi-agent orchestration via `google-cloud-aiplatform[agent_engines,adk]`. Agents run through heuristic `_fallback()` when Agent Engine credentials (`GOOGLE_CLOUD_PROJECT`) are absent; the ADK wiring is in place for production-scale deployment.
 - **Lyria 3** — background music generation (`lyria-3-clip-preview`)
 - **Parallel Search API** — real-time market research
 - **Cloud Run** — serverless deployment; **Secret Manager** — runtime key management
