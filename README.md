@@ -99,7 +99,7 @@ podcraft/
 | GET    | `/`                  | Service info                         |
 | POST   | `/upload`            | Upload script PDF, run full pipeline |
 | POST   | `/analyze`           | Analyze only (no audio)              |
-| GET    | `/download/{filename}`| Download generated audio            |
+| GET    | `/download/{filename}`| Download generated audio or the production pack |
 | GET    | `/health`            | Health check                         |
 
 **Example cURL**
@@ -108,6 +108,14 @@ curl -X POST http://localhost:8000/upload \
   -F "file=@static/demo_script.pdf" \
   -F "genre=technology"
 ```
+
+**Lite demo mode (`?max_segments=N`)** — render at most N evenly-spaced dialogue segments (always the first and last) to save free-tier TTS quota during demos. Must be passed as a query string:
+```bash
+curl -X POST "http://localhost:8000/upload?max_segments=3" \
+  -F "file=@static/demo_script.pdf" -F "genre=technology"
+```
+
+**Audio pack download** — `/upload` also builds `outputs/podcraft_pack_<token>.zip` (manifest + all speech/music WAVs) and returns its `download_url`; each audio segment gets its own `download_url` too. Download with `Content-Disposition: attachment`. Note: Cloud Run is stateless across instances, so run upload + download in one session.
 
 ### Running Tests
 
@@ -137,7 +145,11 @@ All tests are mocked and require no API keys.
 
 ### Demo Video
 
-[Link to YouTube/Video]
+[Link to YouTube/Video — _add link_]
+
+### Live Demo
+
+The service is deployed on Cloud Run: https://podcraft-347254432482.us-central1.run.app
 
 ### License
 

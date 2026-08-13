@@ -29,7 +29,7 @@ PodCraft replaces that manual pipeline with an agentic system. Upload a script o
 ### What's Next
 - Full multi-voice mixdown with ducking and fades
 - Lyria 3 Pro for full-length scored episodes
-- Cloud Run deployment + hosted demo
+- Persistent audio storage (GCS) so downloads survive Cloud Run instance churn
 
 ## Built With
 
@@ -43,8 +43,8 @@ PodCraft replaces that manual pipeline with an agentic system. Upload a script o
 | Google Cloud Secret Manager | API key management |
 | FastAPI / Docker | API + containerization |
 
-## Links (fill in after approval/deploy)
+## Links
 
-- GitHub Repo: _placeholder_
-- Live Demo URL (Cloud Run): _placeholder_
-- Demo Video: _placeholder_
+- GitHub Repo: https://github.com/RusticAngel/PodCraft
+- Live Demo URL (Cloud Run): https://podcraft-347254432482.us-central1.run.app
+- Demo Video: _add YouTube link here_
