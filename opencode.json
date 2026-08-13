@@ -1,0 +1,38 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "google/gemini-3.5-flash",
+  "small_model": "google/gemini-3.5-flash",
+  "provider": {
+    "google": {
+      "options": {
+        "apiKey": "{env:GEMINI_API_KEY}"
+      },
+      "models": {
+        "gemini-3.5-flash": {
+          "name": "Gemini 3.5 Flash (Enterprise)"
+        }
+      }
+    },
+    "google-vertex": {
+      "options": {
+        "project": "{env:GOOGLE_CLOUD_PROJECT}",
+        "location": "global"
+      }
+    }
+  },
+  "mcp": {
+    "grafana": {
+      "type": "remote",
+      "url": "https://mcp.grafana.com/mcp",
+      "headers": {
+        "X-Grafana-URL": "{env:GRAFANA_STACK_URL}"
+      },
+      "enabled": true
+    },
+    "parallel-search": {
+      "type": "remote",
+      "url": "https://search.parallel.ai/mcp",
+      "enabled": true
+    }
+  }
+}

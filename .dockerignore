@@ -1,0 +1,33 @@
+# Environment / secrets
+.env
+.env.*
+credentials.json
+*.key
+opencode.json
+
+# VCS
+.git/
+.gitignore
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Runtime artifacts
+outputs/
+uploads/
+*.wav
+*.mp3
+
+# OpenCode config (validated locally; deployment shouldn't need it)
+.opencode/
+
+# OS
+.DS_Store
+Thumbs.db

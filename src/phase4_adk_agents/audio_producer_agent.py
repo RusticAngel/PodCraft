@@ -43,14 +43,19 @@ class AudioProducerAgent(BaseAgent):
         }
         return self._coerce_config(config)
 
-    def run(self, script_data: Dict, director_analysis: Dict) -> Any:
-        """Generate audio assets from script and analysis."""
+    def run(self, script_data: Dict, director_analysis: Dict, max_segments: int = None) -> Any:
+        """Generate audio assets from script and analysis.
+
+        max_segments limits how many dialogue segments get rendered to
+        speech ("lite demo mode") so free-tier daily TTS quota is preserved.
+        """
         input_payload = {
             "dialogue_segments": script_data.get("dialogue_segments", []),
             "speakers": script_data.get("speakers", []),
             "tone": (director_analysis or {}).get("tone", "neutral"),
             "pacing": (director_analysis or {}).get("pacing", {}),
             "structure": (director_analysis or {}).get("structure", {}),
+            "max_segments": max_segments,
         }
 
         if not self.uses_agent_engine:
@@ -71,11 +76,14 @@ class AudioProducerAgent(BaseAgent):
         segments = production_params.get("dialogue_segments", [])
         speakers = production_params.get("speakers", [])
         tone = production_params.get("tone", "neutral")
+        max_segments = production_params.get("max_segments")
 
-        speaker_profiles = self.speaker_identifier.identify(speakers, segments)
+        selected, original_indices = self._pick_segments(segments, max_segments)
+
+        speaker_profiles = self.speaker_identifier.identify(speakers, selected)
 
         audio_files = []
-        for index, segment in enumerate(segments):
+        for index, segment in zip(original_indices, selected):
             speaker = segment.get("speaker", "Narrator")
             text = segment.get("text", "")
             if not text:
@@ -103,4 +111,20 @@ class AudioProducerAgent(BaseAgent):
             "sentiment_analysis": sentiment,
             "speaker_profiles": speaker_profiles,
             "total_segments": len(audio_files),
+            "lite_mode": max_segments is not None and max_segments < len(segments),
         }
+
+    @staticmethod
+    def _pick_segments(segments: list, max_segments: int = None):
+        """Sample dialogue segments across the episode when max_segments
+        limits the render. Always includes the first and last segments and
+        spaces the rest evenly so different speakers stay represented."""
+        if max_segments is None or max_segments >= len(segments) or len(segments) == 0:
+            return segments, list(range(len(segments)))
+
+        n = max(1, int(max_segments))
+        if n == 1:
+            idx = [0]
+        else:
+            idx = sorted(set(round(i * (len(segments) - 1) / (n - 1)) for i in range(n)))
+        return [segments[i] for i in idx], idx

@@ -22,4 +22,4 @@ RUN mkdir -p uploads outputs static
 EXPOSE 8000
 
 # Run
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
