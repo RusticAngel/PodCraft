@@ -1,15 +1,17 @@
 import mimetypes
+import os
+import shutil
+import zipfile
+import json
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
-import os
-import shutil
 
 from src.phase4_adk_agents.orchestrator import PodcastOrchestrator
 from src.phase2_document_processing.pdf_parser import PDFScriptParser
 from src.config import Config
-from src.utils.file_handlers import safe_filename, safe_join, ensure_dirs
+from src.utils.file_handlers import safe_filename, safe_join, ensure_dirs, stable_token
 
 app = FastAPI(
     title="PodCraft - Podcast-to-Production Agent",
@@ -45,6 +47,39 @@ def _save_upload(file: UploadFile) -> str:
     return upload_path
 
 
+def _build_pack(upload_path: str, result: dict) -> str:
+    """Zip the produced audio assets plus a manifest into outputs/podcraft_pack_<token>.zip.
+
+    Returns the absolute path of the pack. Purely file-based so it works on
+    any container; used by /upload's download_url and GET /download/{name}.
+    """
+    ensure_dirs(Config.OUTPUT_DIR)
+    token = stable_token(os.path.basename(upload_path))
+    pack_name = f"podcraft_pack_{token}.zip"
+    pack_path = os.path.join(Config.OUTPUT_DIR, pack_name)
+
+    audio = result.get("audio_production") or {}
+    paths = []
+    for entry in audio.get("audio_files") or []:
+        path = entry.get("audio_path")
+        if path:
+            paths.append(path)
+    if audio.get("music_path"):
+        paths.append(audio.get("music_path"))
+    paths = sorted({os.path.normpath(p) for p in paths if p})
+
+    manifest = json.dumps(result, indent=2, ensure_ascii=False, default=str)
+    with zipfile.ZipFile(pack_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("production_manifest.json", manifest)
+        for path in paths:
+            name = os.path.basename(path)
+            if os.path.exists(path):
+                zf.write(path, name)
+            else:
+                zf.writestr(f"missing/{name}", f"file was not present on this instance: {path}")
+    return pack_path
+
+
 @app.get("/")
 async def root():
     return {"message": "PodCraft API", "status": "running"}
@@ -68,11 +103,18 @@ async def upload_script(
         orchestrator = get_orchestrator()
         result = orchestrator.process_script(upload_path, genre, max_segments)
 
+        for entry in (result.get("audio_production") or {}).get("audio_files") or []:
+            path = entry.get("audio_path")
+            if path:
+                entry["download_url"] = f"/download/{os.path.basename(os.path.normpath(path))}"
+
+        pack_path = _build_pack(upload_path, result)
+
         return JSONResponse({
             "status": "success",
             "data": result,
             "message": "Podcast production complete!",
-            "download_url": f"/download/{os.path.basename(upload_path)}",
+            "download_url": f"/download/{os.path.basename(pack_path)}",
         })
     except HTTPException:
         raise
@@ -98,11 +140,11 @@ async def analyze_script_only(file: UploadFile = File(...)):
 
 @app.get("/download/{filename}")
 async def download_file(filename: str):
-    """Download generated audio files."""
+    """Download generated files (audio segments, music, or the production pack)."""
     path = safe_join(Config.OUTPUT_DIR, filename)
     if path and os.path.exists(path):
-        media_type = mimetypes.guess_type(path)[0] or "audio/wav"
-        return FileResponse(path, media_type=media_type)
+        media_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        return FileResponse(path, media_type=media_type, filename=os.path.basename(path))
     raise HTTPException(404, "File not found")
 
 
