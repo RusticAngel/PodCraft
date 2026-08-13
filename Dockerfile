@@ -19,7 +19,7 @@ COPY . .
 RUN mkdir -p uploads outputs static
 
 # Expose port
-EXPOSE 8000
+EXPOSE 8080
 
 # Run
-CMD ["sh", "-c", "uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
+CMD ["python", "-m", "src.main"]
