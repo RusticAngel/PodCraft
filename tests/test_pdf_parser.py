@@ -73,3 +73,33 @@ def test_speaker_identifier_distinct_voices():
     assert identifier.assign_voice("A", profiles) == "v1"
     assert identifier.assign_voice("b", profiles) == "v2"
     assert identifier.assign_voice("unknown", profiles) == identifier.default_voice
+
+
+def test_parser_skips_metadata_and_handles_parenthesized_speakers():
+    """FORMAT:/TOPIC: headers must not become speakers; 'OUTRO (Narrator):'
+    with a parenthetical must be recognized as a speaker."""
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp.write(build_pdf([
+            "PODCAST TITLE: THE CREATOR'S CUT",
+            "FORMAT: INTERVIEW",
+            "DURATION: 3 MINUTES",
+            "INT. STUDIO - MORNING",
+            "",
+            "HOST: Welcome back!",
+            "GUEST: Thanks for having me.",
+            "HOST: Let's dig in.",
+            "OUTRO (Narrator): Thanks for listening!",
+        ]))
+        path = tmp.name
+    try:
+        data = PDFScriptParser().parse(path)
+    finally:
+        os.unlink(path)
+
+    speakers = data["speakers"]
+    assert "format" not in speakers
+    assert "duration" not in speakers
+    assert "outro (narrator)" in speakers
+
+    seg_speakers = [seg["speaker"] for seg in data["dialogue_segments"]]
+    assert seg_speakers == ["HOST", "GUEST", "HOST", "OUTRO (Narrator)"]
