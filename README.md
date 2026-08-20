@@ -15,6 +15,10 @@ A multi-agent system that converts podcast scripts into complete, production-rea
 - 🎤 **Multi-Speaker TTS** - Different voices for each speaker
 - 🎼 **Background Music** - Mood-matched via Lyria 3
 - 📊 **Sentiment Analysis** - Compare script tone vs. audio
+- 🖥️ **Streamlit Web UI** - Upload, preview, and download without the API
+- 🎬 **Video Generation (MoviePy)** - Waveform MP4 + combined MP3 + SRT subtitles
+- 🖼️ **Episode Metadata** - Gemini episode title + mood-tinted cover art
+- 📡 **RSS feed** - Publishable podcast feed of productions
 
 ### Tech Stack
 
@@ -25,6 +29,8 @@ A multi-agent system that converts podcast scripts into complete, production-rea
 - **Lyria 3** - Music generation
 - **Cloud Run** - Deployment
 - **FastAPI** - API framework
+- **Streamlit** - Web UI
+- **MoviePy** - Video generation
 
 ### Project Structure
 
@@ -39,6 +45,9 @@ podcraft/
 ├── src/
 │   ├── main.py             # FastAPI application
 │   ├── config.py           # Environment variables
+│   ├── streamlit_app.py    # Streamlit web UI
+│   ├── video_generator.py  # MoviePy MP4/MP3/SRT generation
+│   ├── episode_meta.py     # Gemini episode title + cover art
 │   ├── phase2_document_processing/   # PDF parse, speakers, topics, mood
 │   ├── phase3_partner_integration/   # Parallel Search API wrapper
 │   ├── phase4_adk_agents/            # Director / Researcher / Producer + orchestrator
@@ -49,6 +58,7 @@ podcraft/
 ├── tests/                   # pytest suite (mocked, no keys required)
 ├── static/demo_script.pdf   # Sample podcast script for demo
 ├── scripts/make_demo_pdf.py # Generates the demo PDF
+├── scripts/make_reel.ps1    # Renders a demo reel MP4 from a pack (no quota)
 └── notebooks/agent_test.ipynb        # ADK testing notebook
 ```
 
@@ -87,10 +97,17 @@ podcraft/
    ```
    Access API at: http://localhost:8000
 
-6. **Run with Docker**
+6. **Run the Web UI (optional)**
+   ```bash
+   streamlit run src/streamlit_app.py
+   ```
+   With the API on port 8000, set `API_BASE=http://localhost:8000`. The UI includes a one-click "Try the Demo" button (uses the bundled PDF in lite mode, so it runs off cached audio with zero TTS quota).
+
+7. **Run with Docker (API + UI)**
    ```bash
    docker-compose up --build
    ```
+   API at http://localhost:8080, UI at http://localhost:8501.
 
 ### API Endpoints
 
@@ -99,6 +116,9 @@ podcraft/
 | GET    | `/`                  | Service info                         |
 | POST   | `/upload`            | Upload script PDF, run full pipeline |
 | POST   | `/analyze`           | Analyze only (no audio)              |
+| POST   | `/video?token=<token>`| Generate MP4/MP3/SRT from a pack    |
+| GET    | `/pack/{token}`      | Download a production pack ZIP       |
+| GET    | `/rss`               | RSS feed of latest productions       |
 | GET    | `/download/{filename}`| Download generated audio or the production pack |
 | GET    | `/health`            | Health check                         |
 
@@ -116,6 +136,16 @@ curl -X POST "http://localhost:8000/upload?max_segments=3" \
 ```
 
 **Audio pack download** — `/upload` also builds `outputs/podcraft_pack_<token>.zip` (manifest + all speech/music WAVs) and returns its `download_url`; each audio segment gets its own `download_url` too. Download with `Content-Disposition: attachment`. Note: Cloud Run is stateless across instances, so run upload + download in one session.
+
+**Video generation** — after an upload, render a waveform MP4 + combined MP3 + SRT from the pack (uses only cached audio, no extra TTS quota):
+```bash
+curl -X POST "http://localhost:8000/video?token=<pack_token>" \
+  -o video_result.json
+# then download the MP4/MP3/SRT from the returned URLs
+```
+Or render a reel directly from a pack on disk with `scripts/make_reel.ps1` (no server needed).
+
+**Web UI** — `src/streamlit_app.py` provides upload/demo controls, audio previews, video generation, and download links without touching the API.
 
 ### Running Tests
 

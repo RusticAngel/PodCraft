@@ -1,0 +1,12 @@
+[theme]
+base = "dark"
+primaryColor = "#58a6ff"
+
+[server]
+headless = true
+port = 8501
+address = "0.0.0.0"
+enableXsrfProtection = false
+
+[browser]
+gatherUsageStats = false

@@ -95,3 +95,39 @@ def test_orchestrator_e2e_without_keys(monkeypatch, tmp_path):
     assert result["audio_production"]["music_path"]
     assert isinstance(result["recommendations"], list)
     assert result["director_notes"]["tone"] is not None
+
+
+def test_pick_segments_full_list():
+    producer = AudioProducerAgent()
+    segs = [{"speaker": f"S{i}"} for i in range(7)]
+    all_segs, idx = producer._pick_segments(segs, None)
+    assert all_segs == segs
+    assert idx == list(range(7))
+
+
+def test_pick_segments_lite_includes_first_and_last():
+    producer = AudioProducerAgent()
+    segs = [{"speaker": f"S{i}"} for i in range(7)]
+    picked, idx = producer._pick_segments(segs, 3)
+    assert idx[0] == 0 and idx[-1] == 6
+    assert len(picked) == 3
+    assert [s["speaker"] for s in picked] == ["S0", "S3", "S6"]
+
+
+def test_pick_segments_single():
+    producer = AudioProducerAgent()
+    segs = [{"speaker": f"S{i}"} for i in range(5)]
+    picked, idx = producer._pick_segments(segs, 1)
+    assert picked == [segs[0]] and idx == [0]
+
+
+def test_pick_segments_lite_flag(monkeypatch, tmp_path):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    producer = AudioProducerAgent()
+    segs = [{"speaker": f"S{i}", "text": f"Segment {i} text"} for i in range(7)]
+    result = producer._produce_audio({
+        "dialogue_segments": segs, "speakers": [], "tone": "neutral",
+        "max_segments": 3,
+    })
+    assert result["lite_mode"] is True
+    assert result["total_segments"] == 3

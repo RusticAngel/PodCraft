@@ -11,7 +11,8 @@ param(
     [string]$DemoPdf = "static\demo_script.pdf",
     [string]$Genre = "technology",
     [int]$Port = 8000,
-    [switch]$KeepRunning
+    [switch]$KeepRunning,
+    [string]$VideoToken = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -73,6 +74,20 @@ try {
         $code = curl.exe -s -o $dl -w "%{http_code} %{content_type}" "$base/download/$name"
         Write-Host ("http: " + $code)
         if (Test-Path $dl) { Write-Host ("saved: " + $dl + " (" + (Get-Item $dl).Length + " bytes)") }
+    }
+
+    # Optional: POST /video against a known pack token (e.g. -VideoToken 35c320b8ef793bfdbed70ecf6647b158)
+    if ($VideoToken) {
+        Write-Step "POST /video (token: $VideoToken)"
+        $vtmp = Join-Path $env:TEMP "podcraft_video.json"
+        curl.exe -s -X POST "$base/video?token=$VideoToken" -o $vtmp
+        $video = Get-Content $vtmp | ConvertFrom-Json
+        Write-Host ("status: " + $video.status)
+        Write-Host ("message: " + $video.message)
+        Write-Host ("video: " + $video.data.video)
+        Write-Host ("mp3: " + $video.data.mp3)
+        Write-Host ("srt: " + $video.data.srt)
+        Remove-Item $vtmp -ErrorAction SilentlyContinue
     }
 
     Write-Host "`n=== ALL TESTS DONE ===" -ForegroundColor Green

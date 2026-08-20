@@ -4,7 +4,7 @@ Session memory for AI coding agents working on this repo. Rebuilds context lost 
 
 ## What this project is
 
-**PodCraft** — a multi-agent podcast production system for the **Google Cloud Agentic Cinema Hackathon** (Devpost submission, see `docs/devpost.md`). Upload a podcast script PDF → get a full production pack: parsed script, director notes, market research, per-speaker TTS audio files, mood-matched background music, sentiment analysis, and recommendations.
+**PodCraft** — a multi-agent podcast production system for the **Google Cloud Agentic Cinema Hackathon** (Devpost submission, see `docs/devpost.md`). Upload a podcast script PDF → get a full production pack: parsed script, director notes, market research, per-speaker TTS audio files, mood-matched background music, sentiment analysis, and recommendations — plus an optional video episode (MP4/MP3/SRT) via a Streamlit web UI.
 
 Built exclusively on Google Cloud AI at runtime:
 - **Gemini** (`gemini-3.5-flash`) — agent reasoning + sentiment
@@ -59,6 +59,9 @@ src/
 ├── phase5_deployment/
 │   ├── secret_manager.py          # SecretManagerClient: env var first, then Secret Manager
 │   └── cloud_run.py               # service_yaml() / image_tag() / deploy_cmd()
+├── streamlit_app.py               # Web UI: upload/demo, previews, video gen, downloads (API_BASE env)
+├── video_generator.py             # MoviePy 2.x: waveform MP4 + combined MP3 + SRT from a pack ZIP
+├── episode_meta.py                # Gemini episode title (cached) + PIL cover art
 ├── tools/
 │   ├── gemini_tts.py              # GeminiTTSTool.generate_speech(text, voice) -> WAV path; PCM->WAV wrapping; disk cache
 │   ├── lyria_music.py             # LyriaMusicTool.generate_music(mood, duration) -> path; placeholder fallback
@@ -88,14 +91,36 @@ src/
 
 Purpose: preserve free-tier daily TTS quota during demos (Lyria is hard-quota'd at 0 on free tier → ALWAYS falls back to `synth_placeholder_wav`; verified live).
 
+### Video generation (`src/video_generator.py`) — v2, added 2026-08-19
+`PodCraftVideoGenerator(pack_path, output_path=None, title=None)` + `generate_video_from_pack()`:
+- Consumes the `/upload` pack ZIP (`production_manifest.json` + WAVs).
+- MoviePy **2.x** imports (`from moviepy import AudioFileClip, ...`) — do NOT use `moviepy.editor` (removed in 2.x). `TextClip` needs ImageMagick → all text is rendered with **PIL** on numpy frames.
+- Per-segment timing from real WAV durations (`audio_duration`); concatenated speech + low-volume (0.15) music bed → drives MP4 length and the combined MP3.
+- **Perf (important)**: per-frame `CompositeVideoClip` compositing was ~400–600s for a 38s episode. Fix: pre-render ONE static frame per segment (background + speaker banner + intro title) then `concatenate_videoclips` → ~70s. Frame is 960x540 @ 15fps.
+- Outputs `outputs/podcast_video_<token>.mp4/.mp3/.srt` (token = `stable_token(pack_basename)`).
+- `POST /video?token=<pack_token>` in `main.py` runs it and appends MP4/MP3/SRT back into the pack; `GET /pack/{token}` downloads a pack; `GET /rss` serves an RSS feed of latest packs (`PUBLIC_BASE_URL` env for enclosure URLs). `_add_to_pack()` appends artifacts to an existing zip.
+- `scripts/make_reel.ps1` renders a reel from the latest (or a given) pack WITHOUT a server, zero TTS quota (cached audio).
+
+### Episode metadata (`src/episode_meta.py`) — v2, added 2026-08-19
+- `generate_episode_title(script_analysis, genre)` — one Gemini call, cached at `outputs/title_<token>.txt`; falls back to a heuristic title without keys.
+- `generate_cover_art(title, mood, output_dir)` — 1400x1400 mood-tinted PNG via PIL; no external art API.
+- `/upload` stores this under `result["episode_meta"]` and adds the cover to the pack.
+
+### Web UI (`src/streamlit_app.py`) — v2, added 2026-08-19
+- `API_BASE` env (default `http://localhost:8080`) — prod Cloud Run URL is an override, never hardcoded.
+- Controls: genre select, `max_segments` slider (1–10, default 3), "Try the Demo" (bundled `static/demo_script.pdf`, cached TTS), upload PDF, "Create Podcast", results with metrics/audio previews/market research/manifest, video generation, download links, Start Over.
+- Config in `.streamlit/config.toml` (dark theme, headless). Local run: `streamlit run src/streamlit_app.py`.
+- docker-compose has TWO services: `api` (8080) + `ui` (8501, `API_BASE=http://api:8080`). Cloud Run: separate `podcraft-api` + `podcraft-ui` services.
+
 ## Tests (all mocked, no keys)
 - `tests/test_pdf_parser.py` — parsing, dialogue segments, duration, ScriptAnalyzer, SpeakerIdentifier voice/role assignment
 - `tests/test_agents.py` — Director/Researcher/Producer fallbacks, orchestration E2E via `build_pdf`, placeholder WAV
 - `tests/test_parallel_api.py` — Parallel tool configured/not-configured, query building, result normalization
-- **16 pass, 1 deprecation warning** (PyPDF2 → pydeprec; not urgent, could migrate PyPDF2→pypdf). Some tests write real WAVs to `./outputs`.
+- `tests/test_video_generator.py` — pack manifest parsing, episode title fallback, cover art, moviepy-missing ImportError guard
+- **24 pass, 1 deprecation warning** (PyPDF2 → pydeprec; not urgent, could migrate PyPDF2→pypdf). Some tests write real WAVs to `./outputs`.
 
 ## Current git state
-- Branch `main`, clean upstream (origin/main in sync). All features shipped: lite-mode `max_segments`, audio-pack download, Parallel SDK modernized, `min-instances=1`.
+- Branch `main`. v2 features (Streamlit UI, MoviePy video, episode meta, RSS, /video + /pack endpoints, make_reel.ps1) added 2026-08-19 — **not yet committed**; pending commit + push after verification.
 - **Live Cloud Run** (verified 2026-08-13, all working):
   - Service `podcraft` region `us-central1`, project `podcraft-505309` (num `347254432482`). Current revision `podcraft-00012-k2p`, serving 100%.
   - `/health` → `{"Gemini/TTS": true, "Lyria": true, "Sentiment": true, "Parallel": true}`.
