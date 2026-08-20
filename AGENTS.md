@@ -20,10 +20,12 @@ Built exclusively on Google Cloud AI at runtime:
 - **Repo root**: `C:\Victor\Projects\Agentic Cinema\podcraft`
 - **Python venv**: `.venv` exists. Use `.venv\Scripts\python.exe` (NOT bare `python`) for everything.
 - **Env file**: `.env` (gitignored) + `.env.example`. Loaded via `python-dotenv` in `src/config.py` (auto `load_dotenv()`).
-- **Verified working (2026-08-13)**:
+- **Verified working (2026-08-20)**:
   - ADK installed: `google-cloud-aiplatform` 1.163.0, `google-genai` 2.17.0, `import google.adk` → v2.6.3
   - Install cmd: `.venv\Scripts\python.exe -m pip install "google-cloud-aiplatform[agent_engines,adk]>=1.101.0"`
-  - `GEMINI_API_KEY` set in `.env` (len 53). **NOT** set as a shell env var — always load `.env` (dotenv) before live calls.
+  - `GEMINI_API_KEY` set in `.env` (len 53, prefix `AQ.`). **NOT** set as a shell env var — always load `.env` (dotenv) before live calls.
+  - **Key history**: old `AQ.Ab8RN6KUPMf...` → 401 UNAUTHENTICATED (invalid). New `AQ.Ab8RN6KgXI...` → **WORKS** (authenticates + quota). Project `podcraft-505309` is **Tier 1 Postpay** — billing linked, so free tier is gone; calls bill at pay-as-you-go (demo cost is pennies). Earlier `429 "Your prepayment credits are depleted"` was a $0 prepay balance on the previous key — resolved.
+  - Free-tier facts (in case of new project): RPD resets **midnight Pacific**; limits are per project, not per key; TTS (`gemini-2.5-flash-preview-tts`) caps at **10 req/day** on free tier; **Lyria has NO free tier** (paid only, $0.04/song). Failed requests count toward quota.
   - Live Gemini call verified: `from google import genai; genai.Client().models.generate_content(model='gemini-3.5-flash', contents='Hello')` works.
   - `GOOGLE_CLOUD_PROJECT` is **NOT** set in `.env` → `uses_agent_engine` is False → agents run in heuristic **fallback** mode. This is intentional/graceful.
 
@@ -126,9 +128,11 @@ Purpose: preserve free-tier daily TTS quota during demos (Lyria is hard-quota'd 
 - `tests/test_video_generator.py` — pack manifest parsing, episode title fallback, cover art, moviepy-missing ImportError guard
 - `tests/test_api_endpoints.py` — TestClient tests: health/root, non-PDF rejection, analyze, background job upload+poll, job 404, RSS well-formedness + escaping, pack download
 - **32 pass, 2 deprecation warnings** (PyPDF2 → pypdf; Starlette TestClient httpx — both not urgent). Some tests write real WAVs to `./outputs`.
+- `scripts/check_key.py` (committed `2222d15`) — one-command live Gemini key validator: `.venv\Scripts\python.exe scripts\check_key.py [KEY]` (or reads `GEMINI_API_KEY` from `.env`), exits 0/1.
+- **Live end-to-end verified 2026-08-20**: `test_api.ps1 -Port 8001` full pipeline with real TTS (7 segments, Puck/Kore/Aoede), real sentiment, real market research; jobs, `/download`, `/rss` all pass. Reel generated via `scripts\make_reel.ps1` → `podcast_video_e5405ce1f64067a4f558a33665e62d77.mp4/.mp3/.srt` (76.8s, 27 SRT lines, zero new TTS quota — cached audio).
 
 ## Current git state
-- Branch `main`. v2 features (Streamlit UI, MoviePy video, episode meta, RSS, /video + /pack endpoints, make_reel.ps1) added 2026-08-19. Follow-up hardening: blocking endpoints converted to sync `def` (threadpool), background jobs (`/jobs/upload`, `/jobs/video`, `GET /jobs/{id}`) with UI polling, RSS XML escaping + CORS `allow_credentials=False`, subtitle burn-in in video, endpoint tests. **Not yet committed — pending commit + push.**
+- Branch `main`. Latest commit `2222d15` (check_key.py). Prior: `3b8381d` (harden API: sync endpoints, background jobs, RSS escaping, subtitle burn-in, endpoint tests) and `b390f40` (v2: Streamlit UI, MoviePy video, episode meta, RSS). All pushed to origin.
 - **Live Cloud Run** (verified 2026-08-13, all working):
   - Service `podcraft` region `us-central1`, project `podcraft-505309` (num `347254432482`). Current revision `podcraft-00012-k2p`, serving 100%.
   - `/health` → `{"Gemini/TTS": true, "Lyria": true, "Sentiment": true, "Parallel": true}`.
