@@ -68,7 +68,7 @@ src/
 │   ├── gemini_tts.py              # GeminiTTSTool.generate_speech(text, voice) -> WAV path; PCM->WAV wrapping; disk cache
 │   ├── lyria_music.py             # LyriaMusicTool.generate_music(mood, duration) -> path; placeholder fallback
 │   ├── sentiment_analyzer.py      # SentimentAnalyzerTool.analyze_sentiment(text) -> dict; lexical fallback
-│   └── audio_utils.py             # audio_duration, read_wav_signal, synth_placeholder_wav (mood-tinted), add_silence
+│   └── audio_utils.py             # audio_duration, read_wav_signal, synth_placeholder_wav (mood-tinted chord pad, NOT static), add_silence
 ├── models/schemas.py              # Pydantic: ScriptRequest, UploadResponse, AnalyzeResponse, ProcessResponse, HealthResponse…
 └── utils/
     ├── api_retry.py               # call_with_retry(fn, retries=4, backoff+jitter); is_rate_limit() detects 429/RESOURCE_EXHAUSTED
@@ -91,7 +91,7 @@ src/
 - Returns `original_indices` so audio entries keep their true segment index.
 - Adds `lite_mode: bool` to production output (True when truncated).
 
-Purpose: preserve free-tier daily TTS quota during demos (Lyria is hard-quota'd at 0 on free tier → ALWAYS falls back to `synth_placeholder_wav`; verified live).
+Purpose: preserve free-tier daily TTS quota during demos (Lyria is hard-quota'd at 0 on free tier → ALWAYS falls back to `synth_placeholder_wav`; verified live). Placeholder was overhauled 2026-08-21 to sound like a music bed (floored tremolo + chord pad root/third/fifth + fade envelope) instead of static: zero-crossing rate ~460-850/s (was 3911), peak ~-16 to -20 dBFS, noise-only zone ~5% (was 20.7%).
 
 ### Video generation (`src/video_generator.py`) — v2, added 2026-08-19
 `PodCraftVideoGenerator(pack_path, output_path=None, title=None)` + `generate_video_from_pack()`:

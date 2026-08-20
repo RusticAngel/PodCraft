@@ -82,6 +82,27 @@ def test_placeholder_wav_generates():
     assert dur is not None and dur > 0.5
 
 
+def test_placeholder_wav_is_tonal_not_static():
+    """The music fallback must sound like a tone/pad, not white noise.
+    A clean tone has low zero-crossing rate and a strong tonal RMS."""
+    import math
+    import struct
+    import wave
+
+    path = synth_placeholder_wav("happy", duration_seconds=3)
+    with wave.open(path, "rb") as w:
+        rate = w.getframerate()
+        samples = struct.unpack("<%dh" % w.getnframes(), w.readframes(w.getnframes()))
+    n = len(samples)
+    rms = math.sqrt(sum(x * x for x in samples) / n)
+    zc = sum(1 for i in range(1, n) if (samples[i - 1] < 0) != (samples[i] < 0))
+    zc_per_sec = zc / (n / rate)
+    # A 261 Hz tone + harmonics stays well under ~1000 crossings/sec;
+    # white noise would be in the tens of thousands.
+    assert zc_per_sec < 2000
+    assert rms > 100
+
+
 def test_orchestrator_e2e_without_keys(monkeypatch, tmp_path):
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
