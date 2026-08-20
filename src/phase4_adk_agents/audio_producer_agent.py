@@ -43,11 +43,13 @@ class AudioProducerAgent(BaseAgent):
         }
         return self._coerce_config(config)
 
-    def run(self, script_data: Dict, director_analysis: Dict, max_segments: int = None) -> Any:
+    def run(self, script_data: Dict, director_analysis: Dict, max_segments: int = None,
+            voice_overrides: Dict = None) -> Any:
         """Generate audio assets from script and analysis.
 
         max_segments limits how many dialogue segments get rendered to
         speech ("lite demo mode") so free-tier daily TTS quota is preserved.
+        voice_overrides maps a speaker name to a preferred TTS voice.
         """
         input_payload = {
             "dialogue_segments": script_data.get("dialogue_segments", []),
@@ -56,6 +58,7 @@ class AudioProducerAgent(BaseAgent):
             "pacing": (director_analysis or {}).get("pacing", {}),
             "structure": (director_analysis or {}).get("structure", {}),
             "max_segments": max_segments,
+            "voice_overrides": voice_overrides or {},
         }
 
         if not self.uses_agent_engine:
@@ -77,10 +80,13 @@ class AudioProducerAgent(BaseAgent):
         speakers = production_params.get("speakers", [])
         tone = production_params.get("tone", "neutral")
         max_segments = production_params.get("max_segments")
+        voice_overrides = production_params.get("voice_overrides") or {}
 
         selected, original_indices = self._pick_segments(segments, max_segments)
 
-        speaker_profiles = self.speaker_identifier.identify(speakers, selected)
+        speaker_profiles = self.speaker_identifier.identify(
+            speakers, selected, voice_overrides=voice_overrides
+        )
 
         audio_files = []
         for index, segment in zip(original_indices, selected):
@@ -89,7 +95,9 @@ class AudioProducerAgent(BaseAgent):
             if not text:
                 continue
 
-            voice = self.speaker_identifier.assign_voice(speaker, speaker_profiles)
+            voice = self.speaker_identifier.assign_voice(
+                speaker, speaker_profiles, voice_overrides=voice_overrides
+            )
             audio_path = self.tts_tool.generate_speech(text, voice)
             audio_files.append({
                 "index": index,

@@ -47,6 +47,41 @@ def test_upload_rejects_non_pdf(client):
     assert r.status_code == 400
 
 
+def test_upload_rejects_invalid_voice_override(client):
+    r = client.post(
+        "/upload",
+        files={"file": ("demo.pdf", _demo_pdf(), "application/pdf")},
+        params={"voice_overrides": '{"HOST": "NotARealVoice"}'},
+    )
+    assert r.status_code == 400
+    assert "Unknown voice" in r.json()["detail"]
+
+
+def test_upload_rejects_malformed_voice_override(client):
+    r = client.post(
+        "/upload",
+        files={"file": ("demo.pdf", _demo_pdf(), "application/pdf")},
+        params={"voice_overrides": "not-json"},
+    )
+    assert r.status_code == 400
+
+
+def test_upload_accepts_valid_voice_override(client, monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    r = client.post(
+        "/upload",
+        files={"file": ("demo.pdf", _demo_pdf(), "application/pdf")},
+        params={"voice_overrides": '{"host": "Puck", "guest": "Kore"}',
+                "max_segments": 2},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "success"
+    by_name = {p["speaker"]: p["voice"] for p in body["data"]["speaker_profiles"]}
+    assert by_name.get("host") == "Puck"
+    assert by_name.get("guest") == "Kore"
+
+
 def test_analyze_endpoint(client):
     r = client.post("/analyze", files={"file": ("demo.pdf", _demo_pdf(), "application/pdf")})
     assert r.status_code == 200

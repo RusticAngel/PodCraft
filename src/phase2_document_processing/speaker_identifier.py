@@ -27,32 +27,48 @@ class SpeakerIdentifier:
             "Zephyr",
         ]
 
-    def identify(self, speakers: List[str], dialogue_segments: List[Dict]) -> List[Dict]:
-        """Return a speaker profile list with role and assigned voice."""
+    def identify(self, speakers: List[str], dialogue_segments: List[Dict],
+                 voice_overrides: Dict = None) -> List[Dict]:
+        """Return a speaker profile list with role and assigned voice.
+
+        voice_overrides maps a speaker name (case-insensitive) to a voice;
+        any speaker without an override gets an auto-assigned voice.
+        """
         if not speakers:
             return []
 
         speaking_counts = self._count_utterances(speakers, dialogue_segments)
         sorted_speakers = sorted(speaking_counts.items(), key=lambda x: x[1], reverse=True)
 
+        overrides = {str(k).lower(): v for k, v in (voice_overrides or {}).items()}
         profiles = []
         pool_size = len(self._voice_pool)
         for index, (speaker, utts) in enumerate(sorted_speakers):
+            voice = overrides.get(speaker.lower())
+            if not voice:
+                voice = self._voice_pool[(index * 2) % pool_size]
+                if pool_size > 1 and (index * 2) % pool_size != 1:
+                    voice = self._voice_pool[(index + 1) % pool_size]
             profiles.append({
                 "speaker": speaker,
                 "role": self._infer_role(speaker),
-                "voice": self._voice_pool[(index * 2) % pool_size]
-                if pool_size > 1 and (index * 2) % pool_size != 1
-                else self._voice_pool[(index + 1) % pool_size],
+                "voice": voice,
                 "utterance_count": utts,
                 "is_primary": index == 0,
             })
         return profiles
 
-    def assign_voice(self, speaker: str, profiles: List[Dict]) -> str:
-        """Look up the voice assigned to a speaker in the profile list."""
+    def assign_voice(self, speaker: str, profiles: List[Dict], voice_overrides: Dict = None) -> str:
+        """Look up the voice assigned to a speaker in the profile list.
+
+        An explicit voice_overrides entry wins over the profile assignment.
+        """
+        overrides = {str(k).lower(): v for k, v in (voice_overrides or {}).items()}
+        key = str(speaker).lower()
+        if key in overrides:
+            return overrides[key]
         for profile in profiles:
-            if profile["speaker"].lower() == str(speaker).lower():
+            if profile["speaker"].lower() == key:
                 return profile["voice"]
         return self.default_voice
 

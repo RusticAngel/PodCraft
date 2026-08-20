@@ -115,6 +115,11 @@ Purpose: preserve free-tier daily TTS quota during demos (Lyria is hard-quota'd 
 - `generate_cover_art(title, mood, output_dir)` — 1400x1400 mood-tinted PNG via PIL; no external art API.
 - `/upload` stores this under `result["episode_meta"]` and adds the cover to the pack.
 
+### Per-speaker voice selection + animated video (added 2026-08-20)
+- **Voice overrides**: `POST /upload` + `POST /jobs/upload` accept a `voice_overrides` query param — JSON object mapping speaker names (case-insensitive) to a voice from `Config.VOICE_POOL` (`["Puck","Charon","Kore","Fenrir","Aoede","Zephyr"]`). `_parse_voice_overrides()` validates it (400 on bad JSON/unknown voice). Threaded through `_process_pipeline` → `process_script` → `AudioProducerAgent.run/_produce_audio` → `SpeakerIdentifier.identify()/assign_voice()` (override wins over auto-assignment). Streamlit UI: "Analyze script & pick voices" step lists detected speakers with a voice dropdown each, sends `voice_overrides` on Create Podcast.
+- **Animated video** (`video_generator.py`): the background waveform now has a **time-synced playhead** (white vertical line) + a translucent **band highlight over the currently-speaking segment**, and the speaker banner is **color-coded per speaker** (`_speaker_color`, deterministic hash of name). Pre-renders all overlays once (`_segment_plan`) then composes per-frame with pure numpy (`_frame_at` via MoviePy `VideoClip(make_frame)`) — no per-frame matplotlib/text rendering, so render stays fast. `_waveform_frame` now uses zero-margin axes so x-axis maps linearly to time (playhead accuracy).
+- **Tests (42 pass)**: override-aware identify/assign_voice, producer honors overrides, endpoint accepts/rejects overrides, playhead position + segment plan x-mapping. Verified live: playhead tracks HOST→GUEST→OUTRO across the 76.8s reel.
+
 ### Web UI (`src/streamlit_app.py`) — v2, added 2026-08-19
 - `API_BASE` env (default `http://localhost:8080`) — prod Cloud Run URL is an override, never hardcoded.
 - Controls: genre select, `max_segments` slider (1–10, default 3), "Try the Demo" (bundled `static/demo_script.pdf`, cached TTS), upload PDF, "Create Podcast", results with metrics/audio previews/market research/manifest, video generation, download links, Start Over.
@@ -128,11 +133,12 @@ Purpose: preserve free-tier daily TTS quota during demos (Lyria is hard-quota'd 
 - `tests/test_video_generator.py` — pack manifest parsing, episode title fallback, cover art, moviepy-missing ImportError guard
 - `tests/test_api_endpoints.py` — TestClient tests: health/root, non-PDF rejection, analyze, background job upload+poll, job 404, RSS well-formedness + escaping, pack download
 - **32 pass, 2 deprecation warnings** (PyPDF2 → pypdf; Starlette TestClient httpx — both not urgent). Some tests write real WAVs to `./outputs`.
+- **42 tests pass** as of 2026-08-20 (voice-override + animated-video tests added).
 - `scripts/check_key.py` (committed `2222d15`) — one-command live Gemini key validator: `.venv\Scripts\python.exe scripts\check_key.py [KEY]` (or reads `GEMINI_API_KEY` from `.env`), exits 0/1.
 - **Live end-to-end verified 2026-08-20**: `test_api.ps1 -Port 8001` full pipeline with real TTS (7 segments, Puck/Kore/Aoede), real sentiment, real market research; jobs, `/download`, `/rss` all pass. Reel generated via `scripts\make_reel.ps1` → `podcast_video_e5405ce1f64067a4f558a33665e62d77.mp4/.mp3/.srt` (76.8s, 27 SRT lines, zero new TTS quota — cached audio).
 
 ## Current git state
-- Branch `main`. Latest commit `2222d15` (check_key.py). Prior: `3b8381d` (harden API: sync endpoints, background jobs, RSS escaping, subtitle burn-in, endpoint tests) and `b390f40` (v2: Streamlit UI, MoviePy video, episode meta, RSS). All pushed to origin.
+- Branch `main`. Latest commit pending — working tree has: per-speaker voice overrides (API + orchestrator + UI), animated playhead/color-coded video, 42 tests. Prior commits: `e3c0636` (AGENTS.md key/billing state), `2222d15` (check_key.py), `3b8381d` (harden API), `b390f40` (v2 UI/video).
 - **Live Cloud Run** (verified 2026-08-13, all working):
   - Service `podcraft` region `us-central1`, project `podcraft-505309` (num `347254432482`). Current revision `podcraft-00012-k2p`, serving 100%.
   - `/health` → `{"Gemini/TTS": true, "Lyria": true, "Sentiment": true, "Parallel": true}`.

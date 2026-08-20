@@ -8,6 +8,7 @@ Talks to the PodCraft FastAPI backend (API_BASE env var). Supports:
 """
 
 import os
+import json
 import time
 
 import requests
@@ -16,6 +17,7 @@ import streamlit as st
 API_BASE = os.getenv("API_BASE", "http://localhost:8080").rstrip("/")
 DEMO_PDF = "static/demo_script.pdf"
 GENRES = ["technology", "business", "comedy", "education", "health", "sports", "general"]
+VOICES = ["Puck", "Charon", "Kore", "Fenrir", "Aoede", "Zephyr"]
 
 st.set_page_config(page_title="PodCraft", page_icon="🎙️", layout="wide")
 
@@ -54,11 +56,13 @@ def _poll_job(job_id, timeout_s=600, poll_s=3):
         raise TimeoutError(f"Job {job_id} did not finish in {timeout_s}s")
 
 
-def _start_upload_job(file_bytes, name, genre, max_segments):
+def _start_upload_job(file_bytes, name, genre, max_segments, voice_overrides=None):
     files = {"file": (name, file_bytes, "application/pdf")}
     params = {"genre": genre}
     if max_segments:
         params["max_segments"] = max_segments
+    if voice_overrides:
+        params["voice_overrides"] = json.dumps(voice_overrides)
     resp = requests.post(f"{API_BASE}/jobs/upload", files=files, params=params, timeout=60)
     resp.raise_for_status()
     return resp.json()["job_id"]
@@ -175,20 +179,61 @@ def main():
     elif uploaded is not None:
         file_bytes, file_name = uploaded.getvalue(), uploaded.name
 
-    if file_bytes and (try_demo or st.button("🎙️ Create Podcast", type="primary")):
-        if not file_name.lower().endswith(".pdf"):
-            st.error("Please upload a PDF file.")
-            return
+    if file_bytes and not file_name.lower().endswith(".pdf"):
+        st.error("Please upload a PDF file.")
+
+    analyze = st.button("🔍 Analyze script & pick voices", type="primary",
+                        disabled=not file_bytes or not file_name.lower().endswith(".pdf"))
+    if analyze:
         try:
-            job_id = _start_upload_job(file_bytes, file_name, genre, max_segments)
-            body = _poll_job(job_id, timeout_s=900, poll_s=3)
-            data = body.get("data") or {}
-            pack_url = body.get("download_url") or ""
-            pack_token = pack_url.rsplit("/", 1)[-1].replace("podcraft_pack_", "").replace(".zip", "")
-            st.session_state["pack_token"] = pack_token
-            st.session_state["data"] = data
+            with st.spinner("Analyzing script to detect speakers..."):
+                files = {"file": (file_name, file_bytes, "application/pdf")}
+                resp = requests.post(f"{API_BASE}/analyze", files=files, timeout=120)
+                resp.raise_for_status()
+                script = resp.json().get("script_analysis") or {}
+            st.session_state["speakers"] = script.get("speakers") or []
+            st.session_state["voice_overrides"] = {}
+            st.session_state["file_bytes"] = file_bytes
+            st.session_state["file_name"] = file_name
+            st.session_state["genre"] = genre
+            st.session_state["max_segments"] = max_segments
         except Exception as e:
-            st.error(f"❌ Production failed: {e}")
+            st.error(f"❌ Analysis failed: {e}")
+
+    if st.session_state.get("speakers"):
+        st.markdown("### 🎤 Voices per speaker")
+        st.caption("Assign a Gemini TTS voice to each detected speaker (optional).")
+        cols = st.columns(min(3, len(st.session_state["speakers"])))
+        overrides = {}
+        for i, speaker in enumerate(st.session_state["speakers"]):
+            col = cols[i % len(cols)]
+            with col:
+                st.markdown(f"**{speaker}**")
+                default_idx = min(i, len(VOICES) - 1)
+                voice = st.selectbox(
+                    "Voice", VOICES, index=default_idx, key=f"voice_{i}",
+                    label_visibility="collapsed",
+                )
+                overrides[speaker] = voice
+        st.session_state["voice_overrides"] = overrides
+
+        if st.button("🎙️ Create Podcast", type="primary"):
+            try:
+                job_id = _start_upload_job(
+                    st.session_state["file_bytes"],
+                    st.session_state["file_name"],
+                    st.session_state["genre"],
+                    st.session_state["max_segments"],
+                    st.session_state.get("voice_overrides") or None,
+                )
+                body = _poll_job(job_id, timeout_s=900, poll_s=3)
+                data = body.get("data") or {}
+                pack_url = body.get("download_url") or ""
+                pack_token = pack_url.rsplit("/", 1)[-1].replace("podcraft_pack_", "").replace(".zip", "")
+                st.session_state["pack_token"] = pack_token
+                st.session_state["data"] = data
+            except Exception as e:
+                st.error(f"❌ Production failed: {e}")
 
     if "data" in st.session_state and st.session_state.get("pack_token"):
         _render_result(st.session_state["data"], st.session_state["pack_token"])

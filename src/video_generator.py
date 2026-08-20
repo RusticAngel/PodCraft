@@ -135,7 +135,10 @@ class PodCraftVideoGenerator:
         ax.set_yticks([])
         for spine in ax.spines.values():
             spine.set_visible(False)
-        fig.tight_layout(pad=0)
+        # Zero margins + full-bleed axes so the x-axis maps linearly to
+        # frame pixels (used by the time-synced playhead + segment band).
+        fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        ax.set_xlim(0, len(samples))
         fig.canvas.draw()
         frame = np.asarray(fig.canvas.buffer_rgba())
         plt.close(fig)
@@ -143,6 +146,7 @@ class PodCraftVideoGenerator:
 
     def _text_frame(self, text: str, font_size: int = 64, bg_alpha: int = 140,
                     text_color: tuple = (255, 255, 255),
+                    bar_color: tuple = (10, 17, 23),
                     width: int = FRAME_WIDTH, height: int = FRAME_HEIGHT) -> "numpy.ndarray":
         """Render text centered on a transparent overlay frame via Pillow."""
         import numpy as np
@@ -162,10 +166,20 @@ class PodCraftVideoGenerator:
         bar_y = ty - 16
         bar_h = th + 32
         draw.rectangle(
-            [0, bar_y, width, bar_y + bar_h], fill=(10, 17, 23, bg_alpha)
+            [0, bar_y, width, bar_y + bar_h], fill=bar_color + (bg_alpha,)
         )
         draw.text((tx, ty), text, font=font, fill=text_color + (255,))
         return np.asarray(overlay)
+
+    def _place_overlay(self, overlay: "numpy.ndarray", y=0) -> "numpy.ndarray":
+        """Place an RGBA overlay into a full-frame RGBA canvas at row y."""
+        import numpy as np
+
+        full = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8)
+        h = overlay.shape[0]
+        y = max(0, min(y, FRAME_HEIGHT - h))
+        full[y:y + h, :] = overlay
+        return full
 
     def _watermark_frame(self) -> "numpy.ndarray":
         import numpy as np
@@ -251,6 +265,101 @@ class PodCraftVideoGenerator:
         audio_clip.write_audiofile(mp3_path, fps=44100, logger=None)
         return mp3_path
 
+    def _speaker_color(self, name: str) -> tuple:
+        """Deterministic per-speaker RGB color for banner/band tinting."""
+        palette = [
+            (88, 166, 255),   # blue
+            (255, 123, 114),  # red
+            (126, 231, 135),  # green
+            (210, 168, 255),  # purple
+            (255, 166, 87),   # orange
+            (247, 120, 186),  # pink
+            (121, 192, 255),  # light blue
+            (139, 148, 158),  # gray
+        ]
+        h = 0
+        for ch in str(name).lower():
+            h = (h * 31 + ord(ch)) & 0xFFFFFFFF
+        return palette[h % len(palette)]
+
+    def _composite(self, base: "numpy.ndarray", overlay: "numpy.ndarray") -> "numpy.ndarray":
+        """Blend an RGBA overlay onto an RGB base using its alpha channel."""
+        import numpy as np
+
+        alpha = overlay[..., 3:4].astype(np.float32) / 255.0
+        rgb = overlay[..., :3].astype(np.float32)
+        return (base.astype(np.float32) * (1 - alpha) + rgb * alpha).astype(np.uint8)
+
+    def _segment_plan(self, timed: List, total: float) -> List[Dict]:
+        """Expand timed segments into render-ready entries with colors + x-range.
+
+        Each entry gains: start/end times, x pixel range for the waveform
+        band, speaker color, and pre-rendered banner/subtitle overlays.
+        """
+        plan = []
+        for start, duration, entry in timed:
+            if duration <= 0:
+                continue
+            end = start + duration
+            name = entry.get("speaker", "Speaker")
+            color = self._speaker_color(name)
+            x0 = int(start / total * FRAME_WIDTH) if total else 0
+            x1 = max(x0 + 1, int(end / total * FRAME_WIDTH) if total else FRAME_WIDTH)
+            banner = self._place_overlay(
+                self._text_frame(name, font_size=56, height=140,
+                                 bar_color=color),
+                y=FRAME_HEIGHT - 150,
+            )
+            subtitle = None
+            if self.burn_subtitles:
+                subtitle = self._place_overlay(
+                    self._subtitle_frame(entry.get("text") or ""), y=0
+                )
+            plan.append({
+                "start": start, "end": end, "entry": entry, "name": name,
+                "color": color, "x0": min(x0, FRAME_WIDTH - 1),
+                "x1": min(x1, FRAME_WIDTH), "banner": banner, "subtitle": subtitle,
+            })
+        return plan
+
+    def _frame_at(self, t: float, base: "numpy.ndarray", plan: List[Dict],
+                  title_overlay: "numpy.ndarray", intro_seconds: float,
+                  total: float) -> "numpy.ndarray":
+        """Compose the frame for playback time t.
+
+        Pure numpy compositing of pre-rendered overlays (no matplotlib or
+        text rendering per frame), so animation is fast: a moving playhead
+        + a translucent band over the currently-speaking segment.
+        """
+        import numpy as np
+
+        frame = base.copy()
+        active = None
+        for seg in plan:
+            if seg["start"] <= t < seg["end"] or (seg is plan[-1] and t >= seg["end"]):
+                active = seg
+                break
+        if active is None and plan:
+            active = plan[-1]
+
+        if active:
+            band = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
+            band[:, active["x0"]:active["x1"]] = active["color"]
+            blend = 0.14
+            frame = (frame.astype(np.float32) * (1 - blend)
+                     + band.astype(np.float32) * blend).astype(np.uint8)
+            frame = self._composite(frame, active["banner"])
+            if active["subtitle"] is not None:
+                frame = self._composite(frame, active["subtitle"])
+
+        # Time-synced playhead across the whole waveform.
+        x = min(FRAME_WIDTH - 1, max(0, int(t / total * FRAME_WIDTH))) if total else 0
+        frame[:, x:x + 2] = (255, 255, 255)
+
+        if t < intro_seconds:
+            frame = self._composite(frame, title_overlay)
+        return frame
+
     def _write_srt(self, timed: List, srt_path: str) -> str:
         def stamp(seconds: float) -> str:
             ms = int(round(seconds * 1000))
@@ -277,7 +386,7 @@ class PodCraftVideoGenerator:
         """Render the episode video, MP3 and SRT. Returns their paths."""
         import numpy as np
 
-        AudioFileClip, _, CompositeVideoClip, ImageClip, _ = _import_moviepy()
+        from moviepy import AudioFileClip, VideoClip
         ensure_dirs(os.path.dirname(self.output_path))
 
         files = self._pack_files()
@@ -300,57 +409,30 @@ class PodCraftVideoGenerator:
         step = max(1, len(samples) // 4000)
         waveform = self._waveform_frame(samples[::step])
 
-        import numpy as np
         base = waveform
         if base.shape[:2] != (FRAME_HEIGHT, FRAME_WIDTH):
             Image, _, _ = _import_pil()
             base = np.asarray(Image.fromarray(base).resize((FRAME_WIDTH, FRAME_HEIGHT)))
+        base = base[..., :3]
 
-        def _place_overlay(overlay, y=0):
-            full = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8)
-            h = overlay.shape[0]
-            y = max(0, min(y, FRAME_HEIGHT - h))
-            full[y:y + h, :] = overlay
-            return full
-
-        pinned = _place_overlay(
+        pinned = self._place_overlay(
             self._text_frame(title, font_size=40, bg_alpha=100, height=120), y=0
         )
         watermark = self._watermark_frame()
-        base = np.where(pinned[..., 3:4] > 0, pinned[:, :, :3], base[..., :3])
+        base = np.where(pinned[..., 3:4] > 0, pinned[:, :, :3], base)
         base = np.where(watermark[..., 3:4] > 0, watermark[:, :, :3], base)
 
-        # 3. Pre-render ONE static frame per segment (background + speaker
-        #    banner + title intro) and concatenate — avoids per-frame
-        #    compositing, which is the slow path in MoviePy.
+        # 3. Pre-render per-segment overlays once, then animate via make_frame.
+        plan = self._segment_plan(timed, total)
         intro_seconds = min(4.0, total)
-        segment_clips = []
-        cursor = 0.0
-        for start, duration, entry in timed:
-            if duration <= 0:
-                continue
-            frame = base.copy()
-            name = entry.get("speaker", "Speaker")
-            banner = _place_overlay(
-                self._text_frame(name, font_size=56, height=140),
-                y=FRAME_HEIGHT - 150,
-            )
-            frame = np.where(banner[..., 3:4] > 0, banner[:, :, :3], frame)
-            if self.burn_subtitles:
-                subtitle = self._subtitle_frame(entry.get("text") or "")
-                frame = np.where(subtitle[..., 3:4] > 0, subtitle[:, :, :3], frame)
-            if cursor < intro_seconds:
-                title_overlay = _place_overlay(
-                    self._text_frame(title, font_size=72)
-                )
-                frame = np.where(title_overlay[..., 3:4] > 0, title_overlay[:, :, :3], frame)
-            seg_duration = min(duration, total - cursor)
-            clip = ImageClip(frame.astype(np.uint8)).with_duration(seg_duration)
-            segment_clips.append(clip)
-            cursor += duration
+        title_overlay = self._place_overlay(self._text_frame(title, font_size=72))
 
-        from moviepy import concatenate_videoclips
-        video = concatenate_videoclips(segment_clips)
+        def make_frame(t):
+            return self._frame_at(
+                float(t), base, plan, title_overlay, intro_seconds, total
+            )
+
+        video = VideoClip(make_frame, duration=total)
         video = video.with_audio(audio).with_duration(total)
 
         video.write_videofile(

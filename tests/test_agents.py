@@ -131,3 +131,45 @@ def test_pick_segments_lite_flag(monkeypatch, tmp_path):
     })
     assert result["lite_mode"] is True
     assert result["total_segments"] == 3
+
+
+def test_speaker_identifier_respects_overrides():
+    from src.phase2_document_processing.speaker_identifier import SpeakerIdentifier
+
+    ident = SpeakerIdentifier()
+    profiles = ident.identify(
+        ["host", "guest"],
+        [{"speaker": "HOST"}, {"speaker": "GUEST"}],
+        voice_overrides={"host": "Aoede", "guest": "Fenrir"},
+    )
+    by_name = {p["speaker"]: p["voice"] for p in profiles}
+    assert by_name["host"] == "Aoede"
+    assert by_name["guest"] == "Fenrir"
+
+
+def test_assign_voice_override_wins():
+    from src.phase2_document_processing.speaker_identifier import SpeakerIdentifier
+
+    ident = SpeakerIdentifier()
+    profiles = ident.identify(["host", "guest"], [{"speaker": "HOST"}, {"speaker": "GUEST"}])
+    assert ident.assign_voice("HOST", profiles, {"host": "Zephyr"}) == "Zephyr"
+    # Case-insensitive lookup
+    assert ident.assign_voice("host", profiles, {"HOST": "Kore"}) == "Kore"
+    # No override -> falls back to the profile assignment
+    assigned = ident.assign_voice("HOST", profiles, {})
+    assert assigned in ("Puck", "Charon", "Kore", "Fenrir", "Aoede", "Zephyr")
+
+
+def test_audio_producer_uses_overrides(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    producer = AudioProducerAgent()
+    segs = [{"speaker": "HOST", "text": "Hello"}, {"speaker": "GUEST", "text": "Hi"}]
+    result = producer._produce_audio({
+        "dialogue_segments": segs,
+        "speakers": ["HOST", "GUEST"],
+        "tone": "neutral",
+        "max_segments": None,
+        "voice_overrides": {"HOST": "Aoede", "GUEST": "Kore"},
+    })
+    assert result["speaker_profiles"][0]["voice"] == "Aoede"
+    assert result["speaker_profiles"][1]["voice"] == "Kore"

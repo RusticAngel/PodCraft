@@ -89,14 +89,17 @@ def _save_upload(file: UploadFile) -> str:
     return upload_path
 
 
-def _process_pipeline(upload_path: str, genre: str, max_segments: Optional[int]) -> dict:
+def _process_pipeline(upload_path: str, genre: str, max_segments: Optional[int],
+                      voice_overrides: Optional[dict] = None) -> dict:
     """Run the full production pipeline and return the /upload response body.
 
     Extracted from the endpoint so both sync and background/job flows share
     one implementation.
     """
     orchestrator = get_orchestrator()
-    result = orchestrator.process_script(upload_path, genre, max_segments)
+    result = orchestrator.process_script(
+        upload_path, genre, max_segments, voice_overrides
+    )
 
     for entry in (result.get("audio_production") or {}).get("audio_files") or []:
         path = entry.get("audio_path")
@@ -222,6 +225,28 @@ async def root():
     return {"message": "PodCraft API", "status": "running"}
 
 
+def _parse_voice_overrides(raw: Optional[str]) -> Optional[dict]:
+    """Parse and validate the voice_overrides JSON query param.
+
+    Expects a JSON object like {"HOST": "Puck", "GUEST": "Charon"}. Values
+    must be in the known Gemini TTS voice pool. Returns None when omitted.
+    """
+    if not raw:
+        return None
+    try:
+        overrides = json.loads(raw)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "voice_overrides must be a JSON object like {\"speaker\": \"voice\"}")
+    if not isinstance(overrides, dict):
+        raise HTTPException(400, "voice_overrides must be a JSON object")
+    valid = set(Config.VOICE_POOL)
+    bad = [k for k, v in overrides.items() if not isinstance(v, str) or v not in valid]
+    if bad:
+        raise HTTPException(400, f"Unknown voice(s) for: {', '.join(bad)}. "
+                                 f"Valid voices: {', '.join(sorted(valid))}")
+    return overrides
+
+
 @app.post("/upload")
 def upload_script(
     file: UploadFile = File(...),
@@ -229,13 +254,17 @@ def upload_script(
     max_segments: Optional[int] = Query(
         None, ge=1, description="Lite mode: render at most N dialogue segments to save TTS quota"
     ),
+    voice_overrides: Optional[str] = Query(
+        None, description='JSON object mapping speaker names to voices, e.g. {"HOST":"Puck"}'
+    ),
 ):
     """Upload a podcast script PDF and run the full pipeline synchronously."""
     try:
         if not file.filename or not file.filename.lower().endswith(".pdf"):
             raise HTTPException(400, "File must be a PDF")
         upload_path = _save_upload(file)
-        return JSONResponse(_process_pipeline(upload_path, genre, max_segments))
+        overrides = _parse_voice_overrides(voice_overrides)
+        return JSONResponse(_process_pipeline(upload_path, genre, max_segments, overrides))
     except HTTPException:
         raise
     except Exception as e:
@@ -247,15 +276,19 @@ def start_upload_job(
     file: UploadFile = File(...),
     genre: str = Query("general"),
     max_segments: Optional[int] = Query(None, ge=1),
+    voice_overrides: Optional[str] = Query(
+        None, description='JSON object mapping speaker names to voices, e.g. {"HOST":"Puck"}'
+    ),
 ):
     """Start the full pipeline as a background job; returns a job id to poll."""
     try:
         if not file.filename or not file.filename.lower().endswith(".pdf"):
             raise HTTPException(400, "File must be a PDF")
         upload_path = _save_upload(file)
+        overrides = _parse_voice_overrides(voice_overrides)
         job_id = _submit_job(
             "upload",
-            lambda: _process_pipeline(upload_path, genre, max_segments),
+            lambda: _process_pipeline(upload_path, genre, max_segments, overrides),
         )
         return {"status": "started", "job_id": job_id}
     except HTTPException:

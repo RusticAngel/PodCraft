@@ -83,3 +83,62 @@ def test_generate_video_from_pack_requires_playable_audio(monkeypatch, tmp_path)
     monkeypatch.setattr(builtins, "__import__", fake_import)
     with pytest.raises(ImportError):
         generate_video_from_pack(pack, output_path=str(tmp_path / "out.mp4"))
+
+
+def test_speaker_color_is_deterministic():
+    gen = PodCraftVideoGenerator("unused.zip")
+    assert gen._speaker_color("HOST") == gen._speaker_color("host")
+    assert isinstance(gen._speaker_color("HOST"), tuple)
+
+
+def test_segment_plan_maps_x_range(tmp_path):
+    gen = PodCraftVideoGenerator(str(tmp_path / "pack.zip"))
+    gen._manifest = {
+        "script_analysis": {"genre": "technology"},
+        "audio_production": {
+            "audio_files": [
+                {"index": 0, "speaker": "HOST", "text": "hi",
+                 "audio_path": str(tmp_path / "a.wav")},
+                {"index": 1, "speaker": "GUEST", "text": "hello",
+                 "audio_path": str(tmp_path / "b.wav")},
+            ],
+            "music_path": None,
+        },
+    }
+    timed = [(0.0, 5.0, gen._ordered_segments()[0]),
+             (5.0, 5.0, gen._ordered_segments()[1])]
+    plan = gen._segment_plan(timed, total=10.0)
+    assert len(plan) == 2
+    assert plan[0]["x0"] == 0
+    assert plan[0]["x1"] < plan[1]["x1"]
+    assert plan[1]["x1"] == 960
+    assert plan[0]["banner"].shape == (540, 960, 4)
+    assert plan[0]["subtitle"] is not None
+
+
+def test_frame_at_renders_playhead_and_banner(tmp_path):
+    import numpy as np
+
+    gen = PodCraftVideoGenerator(str(tmp_path / "pack.zip"))
+    base = np.zeros((540, 960, 3), dtype=np.uint8)
+    plan = [{
+        "start": 0.0, "end": 5.0, "entry": {"speaker": "HOST", "text": "hi"},
+        "name": "HOST", "color": (88, 166, 255),
+        "x0": 0, "x1": 480,
+        "banner": np.zeros((540, 960, 4), dtype=np.uint8),
+        "subtitle": None,
+    }]
+    title_overlay = np.zeros((540, 960, 4), dtype=np.uint8)
+    frame = gen._frame_at(2.0, base, plan, title_overlay, intro_seconds=0.0, total=10.0)
+    assert frame.shape == (540, 960, 3)
+    # White playhead drawn near t=2 of 10 -> x ~192 (2px wide)
+    assert frame[270, 192].tolist() == [255, 255, 255]
+    assert frame[270, 193].tolist() == [255, 255, 255]
+
+
+def test_video_generator_builds_pack_files(tmp_path):
+    pack = _make_pack(str(tmp_path / "pack.zip"), tmp_path)
+    gen = PodCraftVideoGenerator(pack)
+    files = gen._pack_files()
+    assert "production_manifest.json" in files
+    assert "speech_abc123.wav" in files

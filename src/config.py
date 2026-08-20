@@ -25,6 +25,7 @@ class Config:
     # TTS voices (Gemini-native audio output voices)
     DEFAULT_VOICE = os.getenv("DEFAULT_TTS_VOICE", "Puck")
     SECONDARY_VOICE = os.getenv("SECONDARY_TTS_VOICE", "Charon")
+    VOICE_POOL = ["Puck", "Charon", "Kore", "Fenrir", "Aoede", "Zephyr"]
 
     # Directories
     UPLOAD_DIR = "./uploads"
