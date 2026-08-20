@@ -1,4 +1,6 @@
 from typing import Dict, List
+import re
+
 from src.config import Config
 
 
@@ -12,7 +14,7 @@ class SpeakerIdentifier:
     ROLE_HINTS = {
         "host": ["host", "narrator", "anchorman", "anchor", "presenter", "dj"],
         "guest": ["guest", "interviewee", "expert", "panelist", "founder"],
-        "support": ["producer", "engineer", "assistant", "sound", "editor"],
+        "support": ["producer", "engineer", "assistant", "sound", "editor", "outro", "intro"],
     }
 
     def __init__(self, default_voice: str = None, secondary_voice: str = None):
@@ -81,7 +83,9 @@ class SpeakerIdentifier:
         return counts
 
     def _infer_role(self, speaker: str) -> str:
-        low = speaker.lower()
+        # "OUTRO (Narrator):" should be matched on its base label "outro",
+        # not the parenthetical tag, so it lands in the right role bucket.
+        low = re.sub(r"\s*\([^)]*\)", "", speaker.lower()).strip()
         for role, hints in self.ROLE_HINTS.items():
             if any(hint in low for hint in hints):
                 return role

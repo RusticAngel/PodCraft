@@ -75,6 +75,17 @@ def test_speaker_identifier_distinct_voices():
     assert identifier.assign_voice("unknown", profiles) == identifier.default_voice
 
 
+def test_speaker_role_inference_parenthesized_and_support():
+    """'OUTRO (Narrator)' must be inferred as a support role, not host:
+    the parenthesized label must not leak into hint matching."""
+    identifier = SpeakerIdentifier()
+    assert identifier._infer_role("OUTRO (Narrator)") == "support"
+    assert identifier._infer_role("Intro (Producer)") == "support"
+    assert identifier._infer_role("HOST") == "host"
+    assert identifier._infer_role("Narrator") == "host"
+    assert identifier._infer_role("GUEST") == "guest"
+
+
 def test_parser_skips_metadata_and_handles_parenthesized_speakers():
     """FORMAT:/TOPIC: headers must not become speakers; 'OUTRO (Narrator):'
     with a parenthetical must be recognized as a speaker."""
