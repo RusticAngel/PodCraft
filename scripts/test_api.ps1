@@ -67,6 +67,24 @@ try {
     Write-Host "recommendations:"
     foreach ($r in $upload.data.recommendations) { Write-Host ("  - " + $r) }
 
+    Write-Step "POST /jobs/upload + GET /jobs/{id} (background job)"
+    curl.exe -s -X POST "$base/jobs/upload" -F "file=@$DemoPdf" -F "genre=$Genre" -F "max_segments=3" -o $tmp
+    $jobStart = Get-Content $tmp | ConvertFrom-Json
+    $jid = $jobStart.job_id
+    Write-Host ("job_id: " + $jid)
+    $jobStatus = $null
+    for ($i = 0; $i -lt 120; $i++) {
+        Start-Sleep -Seconds 2
+        $jobStatus = (curl.exe -s "$base/jobs/$jid" | ConvertFrom-Json)
+        if ($jobStatus.status -eq "done" -or $jobStatus.status -eq "error") { break }
+    }
+    Write-Host ("job status: " + $jobStatus.status)
+    if ($jobStatus.status -eq "done") {
+        $jobToken = $jobStatus.result.pack_token
+        Write-Host ("job pack_token: " + $jobToken)
+    } else { Write-Host ("job error: " + $jobStatus.error) }
+    Remove-Item $tmp -ErrorAction SilentlyContinue
+
     if ($audio.audio_files.Count -gt 0) {
         Write-Step "GET /download (first segment)"
         $name = [System.IO.Path]::GetFileName($audio.audio_files[0].audio_path)
@@ -89,6 +107,10 @@ try {
         Write-Host ("srt: " + $video.data.srt)
         Remove-Item $vtmp -ErrorAction SilentlyContinue
     }
+
+    Write-Step "GET /rss"
+    $rss = curl.exe -s "$base/rss"
+    if ($rss -match "<rss") { Write-Host "RSS feed OK" } else { Write-Host "RSS feed FAILED" }
 
     Write-Host "`n=== ALL TESTS DONE ===" -ForegroundColor Green
 } finally {

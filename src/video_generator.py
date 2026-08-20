@@ -59,9 +59,11 @@ def _import_pil():
 class PodCraftVideoGenerator:
     """Generate an episode video from a PodCraft production pack ZIP."""
 
-    def __init__(self, pack_path: str, output_path: str = None, title: str = None):
+    def __init__(self, pack_path: str, output_path: str = None, title: str = None,
+                 burn_subtitles: bool = True):
         self.pack_path = pack_path
         self.title = title or "PodCraft Episode"
+        self.burn_subtitles = burn_subtitles
         token = stable_token(os.path.basename(pack_path))
         self.token = token
         self.output_path = output_path or os.path.join(
@@ -182,6 +184,34 @@ class PodCraftVideoGenerator:
             (FRAME_WIDTH - tw - 20, FRAME_HEIGHT - th - 16),
             text, font=font, fill=(255, 255, 255, 120),
         )
+        return np.asarray(overlay)
+
+    def _subtitle_frame(self, text: str, max_chars_per_line: int = 60) -> "numpy.ndarray":
+        """Render wrapped subtitle text near the bottom (above the banner)."""
+        import numpy as np
+        import textwrap
+
+        Image, ImageDraw, ImageFont = _import_pil()
+        overlay = Image.new("RGBA", (FRAME_WIDTH, FRAME_HEIGHT), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+        try:
+            font = ImageFont.truetype("arial.ttf", 34)
+        except Exception:
+            font = ImageFont.load_default()
+
+        wrapped = textwrap.wrap(text, width=max_chars_per_line) or [""]
+        lines = wrapped[:3]  # cap at 3 lines to keep the overlay small
+        line_h = 46
+        block_h = len(lines) * line_h + 24
+
+        x = 40
+        y = FRAME_HEIGHT - 150 - block_h - 12
+        draw.rectangle(
+            [x - 16, y - 8, FRAME_WIDTH - x + 16, y + block_h + 8],
+            fill=(10, 17, 23, 170),
+        )
+        for i, line in enumerate(lines):
+            draw.text((x, y + i * line_h + 4), line, font=font, fill=(240, 240, 240, 255))
         return np.asarray(overlay)
 
     # -- audio composition --------------------------------------------------
@@ -306,6 +336,9 @@ class PodCraftVideoGenerator:
                 y=FRAME_HEIGHT - 150,
             )
             frame = np.where(banner[..., 3:4] > 0, banner[:, :, :3], frame)
+            if self.burn_subtitles:
+                subtitle = self._subtitle_frame(entry.get("text") or "")
+                frame = np.where(subtitle[..., 3:4] > 0, subtitle[:, :, :3], frame)
             if cursor < intro_seconds:
                 title_overlay = _place_overlay(
                     self._text_frame(title, font_size=72)

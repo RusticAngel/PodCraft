@@ -1,12 +1,15 @@
 import mimetypes
 import os
 import shutil
+import threading
 import zipfile
 import json
+import uuid
+from xml.sax.saxutils import escape
+from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional
 
 from src.phase4_adk_agents.orchestrator import PodcastOrchestrator
 from src.phase2_document_processing.pdf_parser import PDFScriptParser
@@ -21,16 +24,53 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Browser blocks credentials+wildcard, so credentials must be disabled with
+# a wide-open origin policy (hackathon API, not holding auth).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Lazy orchestrator so the app boots minus API keys.
 _ORCHESTRATOR = None
+
+# Background job registry (in-memory). Jobs are keyed by a UUID; each entry
+# holds status, result/error, and the pack token for follow-up downloads.
+_JOBS: dict = {}
+_JOBS_LOCK = threading.Lock()
+
+
+def _submit_job(kind: str, fn, token: str = None) -> str:
+    """Register a background job and run it on a daemon thread."""
+    job_id = uuid.uuid4().hex
+    with _JOBS_LOCK:
+        _JOBS[job_id] = {"id": job_id, "kind": kind, "status": "running",
+                         "result": None, "error": None, "token": token}
+
+    def _run():
+        try:
+            result = fn()
+            with _JOBS_LOCK:
+                _JOBS[job_id]["result"] = result
+                _JOBS[job_id]["status"] = "done"
+        except Exception as e:
+            with _JOBS_LOCK:
+                _JOBS[job_id]["error"] = str(e)
+                _JOBS[job_id]["status"] = "error"
+
+    threading.Thread(target=_run, daemon=True).start()
+    return job_id
+
+
+def _get_job(job_id: str) -> dict:
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+        if not job:
+            raise HTTPException(404, f"Job not found: {job_id}")
+        return dict(job)
 
 
 def get_orchestrator() -> PodcastOrchestrator:
@@ -47,6 +87,69 @@ def _save_upload(file: UploadFile) -> str:
     with open(upload_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
     return upload_path
+
+
+def _process_pipeline(upload_path: str, genre: str, max_segments: Optional[int]) -> dict:
+    """Run the full production pipeline and return the /upload response body.
+
+    Extracted from the endpoint so both sync and background/job flows share
+    one implementation.
+    """
+    orchestrator = get_orchestrator()
+    result = orchestrator.process_script(upload_path, genre, max_segments)
+
+    for entry in (result.get("audio_production") or {}).get("audio_files") or []:
+        path = entry.get("audio_path")
+        if path:
+            entry["download_url"] = f"/download/{os.path.basename(os.path.normpath(path))}"
+
+    meta = _pack_title(result, genre)
+    result["episode_meta"] = meta
+
+    pack_path = _build_pack(upload_path, result)
+    if meta.get("cover_path"):
+        _add_to_pack(pack_path, meta["cover_path"])
+
+    return {
+        "status": "success",
+        "data": result,
+        "message": "Podcast production complete!",
+        "download_url": f"/download/{os.path.basename(pack_path)}",
+        "pack_token": os.path.basename(pack_path).replace("podcraft_pack_", "").replace(".zip", ""),
+    }
+
+
+def _run_video_job(token: str, title: str = None) -> dict:
+    """Generate video assets from a pack token; returns the /video response body."""
+    pack_path = _find_pack(token)
+    ensure_dirs(Config.OUTPUT_DIR)
+
+    with zipfile.ZipFile(pack_path) as zf:
+        manifest = json.loads(zf.read("production_manifest.json"))
+    resolved_title = title or (manifest.get("episode_meta") or {}).get("title") or "PodCraft Episode"
+
+    outputs = generate_video_from_pack(pack_path, title=resolved_title)
+    _add_to_pack(
+        pack_path,
+        outputs.get("video_path"),
+        outputs.get("mp3_path"),
+        outputs.get("srt_path"),
+    )
+
+    return {
+        "status": "success",
+        "message": "Video generation complete!",
+        "data": {
+            "video": outputs.get("video_path"),
+            "mp3": outputs.get("mp3_path"),
+            "srt": outputs.get("srt_path"),
+            "title": resolved_title,
+        },
+        "video_url": f"/download/{os.path.basename(outputs['video_path'])}",
+        "mp3_url": f"/download/{os.path.basename(outputs['mp3_path'])}",
+        "srt_url": f"/download/{os.path.basename(outputs['srt_path'])}",
+        "download_url": f"/download/{os.path.basename(pack_path)}",
+    }
 
 
 def _build_pack(upload_path: str, result: dict) -> str:
@@ -120,49 +223,77 @@ async def root():
 
 
 @app.post("/upload")
-async def upload_script(
+def upload_script(
     file: UploadFile = File(...),
     genre: str = Query("general", description="Podcast genre for market research"),
     max_segments: Optional[int] = Query(
         None, ge=1, description="Lite mode: render at most N dialogue segments to save TTS quota"
     ),
 ):
-    """Upload a podcast script PDF and start production."""
+    """Upload a podcast script PDF and run the full pipeline synchronously."""
     try:
         if not file.filename or not file.filename.lower().endswith(".pdf"):
             raise HTTPException(400, "File must be a PDF")
-
         upload_path = _save_upload(file)
-
-        orchestrator = get_orchestrator()
-        result = orchestrator.process_script(upload_path, genre, max_segments)
-
-        for entry in (result.get("audio_production") or {}).get("audio_files") or []:
-            path = entry.get("audio_path")
-            if path:
-                entry["download_url"] = f"/download/{os.path.basename(os.path.normpath(path))}"
-
-        meta = _pack_title(result, genre)
-        result["episode_meta"] = meta
-
-        pack_path = _build_pack(upload_path, result)
-        if meta.get("cover_path"):
-            _add_to_pack(pack_path, meta["cover_path"])
-
-        return JSONResponse({
-            "status": "success",
-            "data": result,
-            "message": "Podcast production complete!",
-            "download_url": f"/download/{os.path.basename(pack_path)}",
-        })
+        return JSONResponse(_process_pipeline(upload_path, genre, max_segments))
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(500, str(e))
 
 
+@app.post("/jobs/upload")
+def start_upload_job(
+    file: UploadFile = File(...),
+    genre: str = Query("general"),
+    max_segments: Optional[int] = Query(None, ge=1),
+):
+    """Start the full pipeline as a background job; returns a job id to poll."""
+    try:
+        if not file.filename or not file.filename.lower().endswith(".pdf"):
+            raise HTTPException(400, "File must be a PDF")
+        upload_path = _save_upload(file)
+        job_id = _submit_job(
+            "upload",
+            lambda: _process_pipeline(upload_path, genre, max_segments),
+        )
+        return {"status": "started", "job_id": job_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/jobs/video")
+def start_video_job(
+    token: str = Query(..., description="Pack token from /upload response"),
+    title: str = Query(None),
+):
+    """Start video generation as a background job; returns a job id to poll."""
+    try:
+        _find_pack(token)  # validate early
+        job_id = _submit_job("video", lambda: _run_video_job(token, title), token=token)
+        return {"status": "started", "job_id": job_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/jobs/{job_id}")
+def get_job_status(job_id: str):
+    """Poll a background job. Returns status + result once complete."""
+    job = _get_job(job_id)
+    body = {"id": job["id"], "kind": job["kind"], "status": job["status"]}
+    if job["status"] == "done":
+        body["result"] = job["result"]
+    elif job["status"] == "error":
+        body["error"] = job["error"]
+    return body
+
+
 @app.post("/analyze")
-async def analyze_script_only(file: UploadFile = File(...)):
+def analyze_script_only(file: UploadFile = File(...)):
     """Analyze script without generating audio."""
     try:
         upload_path = _save_upload(file)
@@ -197,7 +328,7 @@ async def download_pack(token: str):
 
 
 @app.post("/video")
-async def generate_video(
+def generate_video(
     token: str = Query(..., description="Pack token from /upload response"),
     title: str = Query(None, description="Optional episode title for the video overlay"),
 ):
@@ -206,35 +337,7 @@ async def generate_video(
     Also emits a combined MP3 + SRT and appends video/mp3/srt to the pack.
     """
     try:
-        pack_path = _find_pack(token)
-        ensure_dirs(Config.OUTPUT_DIR)
-
-        with zipfile.ZipFile(pack_path) as zf:
-            manifest = json.loads(zf.read("production_manifest.json"))
-        resolved_title = title or (manifest.get("episode_meta") or {}).get("title") or "PodCraft Episode"
-
-        outputs = generate_video_from_pack(pack_path, title=resolved_title)
-        _add_to_pack(
-            pack_path,
-            outputs.get("video_path"),
-            outputs.get("mp3_path"),
-            outputs.get("srt_path"),
-        )
-
-        return JSONResponse({
-            "status": "success",
-            "message": "Video generation complete!",
-            "data": {
-                "video": outputs.get("video_path"),
-                "mp3": outputs.get("mp3_path"),
-                "srt": outputs.get("srt_path"),
-                "title": resolved_title,
-            },
-            "video_url": f"/download/{os.path.basename(outputs['video_path'])}",
-            "mp3_url": f"/download/{os.path.basename(outputs['mp3_path'])}",
-            "srt_url": f"/download/{os.path.basename(outputs['srt_path'])}",
-            "download_url": f"/download/{os.path.basename(pack_path)}",
-        })
+        return JSONResponse(_run_video_job(token, title))
     except HTTPException:
         raise
     except Exception as e:
@@ -242,7 +345,7 @@ async def generate_video(
 
 
 @app.get("/rss")
-async def podcast_rss():
+def podcast_rss():
     """Serve a minimal RSS feed of the latest production pack(s)."""
     ensure_dirs(Config.OUTPUT_DIR)
     packs = sorted(
@@ -267,8 +370,9 @@ async def podcast_rss():
                 f'type="application/zip" length="0"/>'
             )
         items.append(
-            f"<item><title>{title}</title><description>{description}</description>{enclosure}"
-            f"<guid>{pack_name}</guid></item>"
+            f"<item><title>{escape(title)}</title>"
+            f"<description>{escape(description)}</description>{enclosure}"
+            f"<guid>{escape(pack_name)}</guid></item>"
         )
 
     xml = (

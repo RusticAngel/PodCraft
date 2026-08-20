@@ -98,8 +98,15 @@ Purpose: preserve free-tier daily TTS quota during demos (Lyria is hard-quota'd 
 - Per-segment timing from real WAV durations (`audio_duration`); concatenated speech + low-volume (0.15) music bed → drives MP4 length and the combined MP3.
 - **Perf (important)**: per-frame `CompositeVideoClip` compositing was ~400–600s for a 38s episode. Fix: pre-render ONE static frame per segment (background + speaker banner + intro title) then `concatenate_videoclips` → ~70s. Frame is 960x540 @ 15fps.
 - Outputs `outputs/podcast_video_<token>.mp4/.mp3/.srt` (token = `stable_token(pack_basename)`).
+- `burn_subtitles=True` (default): renders each segment's text (wrapped, up to 3 lines) above the speaker banner via `_subtitle_frame`.
 - `POST /video?token=<pack_token>` in `main.py` runs it and appends MP4/MP3/SRT back into the pack; `GET /pack/{token}` downloads a pack; `GET /rss` serves an RSS feed of latest packs (`PUBLIC_BASE_URL` env for enclosure URLs). `_add_to_pack()` appends artifacts to an existing zip.
 - `scripts/make_reel.ps1` renders a reel from the latest (or a given) pack WITHOUT a server, zero TTS quota (cached audio).
+
+### Background jobs & blocking endpoints (added 2026-08-19)
+- `/upload`, `/video`, `/analyze` are **sync `def`** (FastAPI runs them in a threadpool) — they were `async def` calling blocking code, which stalled the event loop. Light endpoints (`/`, `/health`, `/download`, `/pack`) stay `async`.
+- `_process_pipeline(upload_path, genre, max_segments)` and `_run_video_job(token, title)` are the shared core functions used by both the sync endpoints and the background jobs.
+- `POST /jobs/upload` + `POST /jobs/video` start work on a daemon thread via `_submit_job`; `GET /jobs/{id}` returns `{status: running|done|error, result, error, token}`. In-memory `_JOBS` dict guarded by `_JOBS_LOCK`. Streamlit UI polls these instead of holding a single long request.
+- `_JOBS` is in-memory → job state does not survive a restart (fine for a demo; GCS + a real queue is the post-hackathon upgrade).
 
 ### Episode metadata (`src/episode_meta.py`) — v2, added 2026-08-19
 - `generate_episode_title(script_analysis, genre)` — one Gemini call, cached at `outputs/title_<token>.txt`; falls back to a heuristic title without keys.
@@ -117,10 +124,11 @@ Purpose: preserve free-tier daily TTS quota during demos (Lyria is hard-quota'd 
 - `tests/test_agents.py` — Director/Researcher/Producer fallbacks, orchestration E2E via `build_pdf`, placeholder WAV
 - `tests/test_parallel_api.py` — Parallel tool configured/not-configured, query building, result normalization
 - `tests/test_video_generator.py` — pack manifest parsing, episode title fallback, cover art, moviepy-missing ImportError guard
-- **24 pass, 1 deprecation warning** (PyPDF2 → pydeprec; not urgent, could migrate PyPDF2→pypdf). Some tests write real WAVs to `./outputs`.
+- `tests/test_api_endpoints.py` — TestClient tests: health/root, non-PDF rejection, analyze, background job upload+poll, job 404, RSS well-formedness + escaping, pack download
+- **32 pass, 2 deprecation warnings** (PyPDF2 → pypdf; Starlette TestClient httpx — both not urgent). Some tests write real WAVs to `./outputs`.
 
 ## Current git state
-- Branch `main`. v2 features (Streamlit UI, MoviePy video, episode meta, RSS, /video + /pack endpoints, make_reel.ps1) added 2026-08-19 — **not yet committed**; pending commit + push after verification.
+- Branch `main`. v2 features (Streamlit UI, MoviePy video, episode meta, RSS, /video + /pack endpoints, make_reel.ps1) added 2026-08-19. Follow-up hardening: blocking endpoints converted to sync `def` (threadpool), background jobs (`/jobs/upload`, `/jobs/video`, `GET /jobs/{id}`) with UI polling, RSS XML escaping + CORS `allow_credentials=False`, subtitle burn-in in video, endpoint tests. **Not yet committed — pending commit + push.**
 - **Live Cloud Run** (verified 2026-08-13, all working):
   - Service `podcraft` region `us-central1`, project `podcraft-505309` (num `347254432482`). Current revision `podcraft-00012-k2p`, serving 100%.
   - `/health` → `{"Gemini/TTS": true, "Lyria": true, "Sentiment": true, "Parallel": true}`.

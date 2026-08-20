@@ -3,11 +3,12 @@
 Talks to the PodCraft FastAPI backend (API_BASE env var). Supports:
   * PDF upload + genre + segment-count controls
   * one-click "Try the Demo" using the bundled demo PDF (lite mode)
-  * video generation from the finished pack
+  * video generation from the finished pack (background job + polling)
   * downloads (audio pack, video, MP3, SRT, RSS) + audio previews
 """
 
 import os
+import time
 
 import requests
 import streamlit as st
@@ -37,16 +38,36 @@ def _api_health():
         st.stop()
 
 
-def _upload(file_bytes, name, genre, max_segments):
+def _poll_job(job_id, timeout_s=600, poll_s=3):
+    """Poll a background job until done/error. Returns the result body."""
+    deadline = time.time() + timeout_s
+    with st.spinner("Processing... this can take a couple of minutes."):
+        while time.time() < deadline:
+            resp = requests.get(f"{API_BASE}/jobs/{job_id}", timeout=10)
+            if resp.status_code == 200:
+                job = resp.json()
+                if job.get("status") == "done":
+                    return job.get("result")
+                if job.get("status") == "error":
+                    raise RuntimeError(job.get("error") or "Job failed")
+            time.sleep(poll_s)
+        raise TimeoutError(f"Job {job_id} did not finish in {timeout_s}s")
+
+
+def _start_upload_job(file_bytes, name, genre, max_segments):
     files = {"file": (name, file_bytes, "application/pdf")}
     params = {"genre": genre}
     if max_segments:
         params["max_segments"] = max_segments
-    return requests.post(f"{API_BASE}/upload", files=files, params=params, timeout=180)
+    resp = requests.post(f"{API_BASE}/jobs/upload", files=files, params=params, timeout=60)
+    resp.raise_for_status()
+    return resp.json()["job_id"]
 
 
-def _generate_video(token):
-    return requests.post(f"{API_BASE}/video", params={"token": token}, timeout=300)
+def _start_video_job(token):
+    resp = requests.post(f"{API_BASE}/jobs/video", params={"token": token}, timeout=30)
+    resp.raise_for_status()
+    return resp.json()["job_id"]
 
 
 def _render_result(data, pack_token):
@@ -104,18 +125,17 @@ def _render_result(data, pack_token):
     dl2.markdown(f'<a href="{API_BASE}/rss" class="btn">📡 RSS</a>', unsafe_allow_html=True)
 
     if st.button("🎬 Generate video (MP4)"):
-        with st.spinner("Rendering waveform video + MP3 + subtitles..."):
-            resp = _generate_video(pack_token)
-        if resp.status_code == 200:
-            v = resp.json()
+        try:
+            job_id = _start_video_job(pack_token)
+            v = _poll_job(job_id, timeout_s=900, poll_s=5)
             st.success("Video ready!")
             st.video(f"{API_BASE}{v['video_url']}")
             col_v, col_m, col_s = st.columns(3)
             col_v.markdown(f'<a href="{API_BASE}{v["video_url"]}">⬇️ MP4</a>', unsafe_allow_html=True)
             col_m.markdown(f'<a href="{API_BASE}{v["mp3_url"]}">⬇️ MP3</a>', unsafe_allow_html=True)
             col_s.markdown(f'<a href="{API_BASE}{v["srt_url"]}">⬇️ SRT</a>', unsafe_allow_html=True)
-        else:
-            st.error(f"Video generation failed: {resp.text[:300]}")
+        except Exception as e:
+            st.error(f"Video generation failed: {e}")
 
 
 def main():
@@ -159,17 +179,16 @@ def main():
         if not file_name.lower().endswith(".pdf"):
             st.error("Please upload a PDF file.")
             return
-        with st.spinner("🎬 Processing... (60–90s) — parsing, directing, researching, producing"):
-            resp = _upload(file_bytes, file_name, genre, max_segments)
-        if resp.status_code == 200:
-            body = resp.json()
+        try:
+            job_id = _start_upload_job(file_bytes, file_name, genre, max_segments)
+            body = _poll_job(job_id, timeout_s=900, poll_s=3)
             data = body.get("data") or {}
             pack_url = body.get("download_url") or ""
             pack_token = pack_url.rsplit("/", 1)[-1].replace("podcraft_pack_", "").replace(".zip", "")
             st.session_state["pack_token"] = pack_token
             st.session_state["data"] = data
-        else:
-            st.error(f"❌ Production failed: {resp.text[:300]}")
+        except Exception as e:
+            st.error(f"❌ Production failed: {e}")
 
     if "data" in st.session_state and st.session_state.get("pack_token"):
         _render_result(st.session_state["data"], st.session_state["pack_token"])
