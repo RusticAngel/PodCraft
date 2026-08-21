@@ -23,6 +23,10 @@ class PDFScriptParser:
     # Allows all-caps speaker labels with an optional trailing parenthetical
     # (e.g. "OUTRO (Narrator):"), while excluding common header metadata.
     speaker_pattern = r'^([A-Z][A-Z0-9 ]*(?:\s*\([^)]*\))?):'
+    # Also accepts numbered role labels as commonly written by humans,
+    # e.g. "Speaker 1 – Host:", "Speaker 2 - Analyst:" (en/em dash or hyphen).
+    # The full label ("Speaker 1 – Host") becomes the speaker name.
+    speaker_pattern_numbered = r'^(Speaker\s*\d+\s*[‒–—-]\s*[^:\n]{1,60}):'
     # Header metadata labels that look like speakers but are not dialogue.
     non_speaker_labels = {
         "format", "topic", "title", "duration", "genre", "summary",
@@ -42,6 +46,26 @@ class PDFScriptParser:
         if key in PDFScriptParser.non_speaker_labels:
             return False
         return bool(key)
+
+    @classmethod
+    def _split_speaker(cls, line: str):
+        """Return (label, remaining_text) when the line starts with a
+        speaker label, otherwise (None, line).
+
+        Tries the strict ALL-CAPS pattern first, then the numbered
+        "Speaker N – Role:" pattern; only the matching pattern is applied.
+        """
+        match = re.match(cls.speaker_pattern, line)
+        if not match:
+            match = re.match(cls.speaker_pattern_numbered, line)
+        if match:
+            return match.group(1), line[match.end():].strip()
+        return None, line
+
+    @classmethod
+    def _match_speaker(cls, line: str):
+        """Return the matched speaker label for a line, or None."""
+        return cls._split_speaker(line)[0]
 
     def parse(self, pdf_path: str) -> Dict:
         """Extract text and structured data from PDF."""
@@ -103,11 +127,11 @@ class PDFScriptParser:
 
     def _extract_speakers(self, text: str) -> List[str]:
         """Extract speaker names from script."""
-        matches = re.findall(self.speaker_pattern, text, re.MULTILINE)
         speakers = []
-        for m in matches:
-            if self._is_speaker(m):
-                speakers.append(m.lower().strip())
+        for line in text.split('\n'):
+            label = self._match_speaker(line)
+            if label and self._is_speaker(label):
+                speakers.append(label.lower().strip())
         return list(dict.fromkeys(speakers))
 
     def _extract_dialogue_segments(self, text: str) -> List[Dict]:
@@ -127,9 +151,8 @@ class PDFScriptParser:
                     })
 
         for line in lines:
-            speaker_match = re.match(self.speaker_pattern, line)
-            if speaker_match:
-                label = speaker_match.group(1)
+            label, rest = self._split_speaker(line)
+            if label:
                 if not self._is_speaker(label):
                     # Metadata header line -> close any open block and skip.
                     flush()
@@ -138,7 +161,7 @@ class PDFScriptParser:
                     continue
                 flush()
                 current_speaker = label
-                current_dialogue = [re.sub(self.speaker_pattern, '', line).strip()]
+                current_dialogue = [rest]
             elif current_speaker:
                 current_dialogue.append(line.strip())
 

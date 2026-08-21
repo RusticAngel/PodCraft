@@ -160,3 +160,78 @@ def test_parser_rejects_unsupported_extension(tmp_path):
 def test_supported_extensions_listed():
     exts = PDFScriptParser.supported_extensions()
     assert exts == [".docx", ".markdown", ".md", ".pdf", ".txt"]
+
+
+_NUMBERED_SCRIPT = """Speaker 1 – Host:
+Welcome back to The Final Whistle. Today we're looking at one of the biggest questions in sport.
+
+Speaker 2 – Analyst:
+Talent helps, of course. But talent alone doesn't win championships.
+
+Speaker 3 – Former Player:
+I learned that the hard way. You can have the fastest players in the league.
+
+Speaker 1 – Host:
+And that's what makes sport so unpredictable.
+
+Speaker 2 – Analyst:
+Exactly. Statistics can tell us who should win, but they can't measure determination.
+
+Speaker 3 – Former Player:
+And sometimes, that's all you need.
+
+Speaker 1 – Host:
+Until next time, keep playing, keep believing.
+"""
+
+
+def _write_numbered_script(path, dash="–"):
+    body = _NUMBERED_SCRIPT.replace("–", dash)
+    path.write_text(body, encoding="utf-8")
+    return str(path)
+
+
+def test_parser_supports_numbered_speaker_labels(tmp_path):
+    """'Speaker N – Role:' style labels must be recognized as speakers."""
+    data = PDFScriptParser().parse(_write_numbered_script(tmp_path / "numbered.txt"))
+    assert data["speakers"] == [
+        "speaker 1 – host",
+        "speaker 2 – analyst",
+        "speaker 3 – former player",
+    ]
+    segments = data["dialogue_segments"]
+    assert len(segments) == 7
+    assert [s["speaker"] for s in segments] == [
+        "Speaker 1 – Host", "Speaker 2 – Analyst", "Speaker 3 – Former Player",
+        "Speaker 1 – Host", "Speaker 2 – Analyst", "Speaker 3 – Former Player",
+        "Speaker 1 – Host",
+    ]
+    assert all(s["text"] for s in segments)
+    # Label must not leak into the dialogue text.
+    assert not segments[0]["text"].lower().startswith("speaker")
+
+
+def test_parser_numbered_labels_hyphen_and_emdash(tmp_path):
+    """Hyphen and em-dash variants parse identically."""
+    for name, dash in (("hyphen.txt", "-"), ("emdash.txt", "—")):
+        data = PDFScriptParser().parse(_write_numbered_script(tmp_path / name, dash=dash))
+        assert len(data["speakers"]) == 3
+        assert len(data["dialogue_segments"]) == 7
+
+
+def test_numbered_speaker_role_inference():
+    """Role hints inside numbered labels still drive role assignment."""
+    identifier = SpeakerIdentifier()
+    assert identifier._infer_role("Speaker 1 – Host") == "host"
+    assert identifier._infer_role("Speaker 2 - Analyst") == "guest"
+    assert identifier._infer_role("Speaker 3 – Producer") == "support"
+
+
+def test_numbered_labels_do_not_break_metadata_filtering(tmp_path):
+    """Metadata headers stay filtered when both patterns are active."""
+    body = ("FORMAT: INTERVIEW\n\n" + _NUMBERED_SCRIPT)
+    path = tmp_path / "mixed.txt"
+    path.write_text(body, encoding="utf-8")
+    data = PDFScriptParser().parse(str(path))
+    assert "format" not in data["speakers"]
+    assert len(data["dialogue_segments"]) == 7

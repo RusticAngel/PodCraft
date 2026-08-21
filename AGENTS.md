@@ -47,7 +47,9 @@ src/
 ├── phase2_document_processing/
 │   ├── pdf_parser.py              # PDFScriptParser: accepts PDF/TXT/MD/DOCX (dispatch by extension in _extract_text;
 │   │                              #   _extract_text_pdf/plain/docx; ValueError on unknown ext; supported_extensions()).
-│   │                              #   Extracts full_text, speakers (regex "SPEAKER:"), dialogue_segments,
+│   │                              #   Speaker labels: strict ALL-CAPS ("HOST:", "OUTRO (Narrator):") AND numbered
+│   │                              #   "Speaker N – Role:" (en/em dash or hyphen) via _split_speaker/_match_speaker.
+│   │                              #   Extracts full_text, speakers, dialogue_segments,
 │   │                              #   topics (word freq), mood (keyword counts), scene_breaks, estimated_duration (words//150)
 │   ├── script_analyzer.py         # ScriptAnalyzer: structure (intro/segment/middle/outro hints), production_cues, tone_profile
 │   └── speaker_identifier.py      # SpeakerIdentifier: role inference + voice assignment (voice pool Puck/Charon/Kore/Fenrir/Aoede/Zephyr)
@@ -122,7 +124,8 @@ Purpose: preserve free-tier daily TTS quota during demos (Lyria is hard-quota'd 
 - **Animated video** (`video_generator.py`): the background waveform now has a **time-synced playhead** (white vertical line) + a translucent **band highlight over the currently-speaking segment**, and the speaker banner is **color-coded per speaker** (`_speaker_color`, deterministic hash of name). **Render speed (2026-08-21)**: `_precompute_backgrounds` bakes band+banner+subtitle into ONE background frame per segment; `_frame_at` fast path is just a background copy + playhead draw (intro title composited only during the first ≤4s). Full 190s/12-segment episode renders in **~79s** (was ~10 min). Pixel-equivalence test proves the fast path matches per-frame compositing. Waveform decode lowered to 11.025kHz (only ~4000 points plotted). `_waveform_frame` uses zero-margin axes so x maps linearly to time.
 - **Tests (42 pass)**: override-aware identify/assign_voice, producer honors overrides, endpoint accepts/rejects overrides, playhead position + segment plan x-mapping. Verified live: playhead tracks HOST→GUEST→OUTRO across the 76.8s reel.
 - **Narrator role fix (2026-08-21)**: `_infer_role` now strips parenthesized labels (e.g. `OUTRO (Narrator)` → matches on `outro`) and `outro`/`intro` are `support` role hints → OUTRO is no longer mis-inferred as host.
-- **Multi-format script upload (2026-08-21)**: PDF + TXT + MD/Markdown + DOCX accepted everywhere. `main.py` `_validate_upload()` + `ALLOWED_UPLOAD_EXTS` (= `PDFScriptParser.supported_extensions()`) guard `/upload`, `/jobs/upload`, `/analyze`; parser dispatches by extension (`_extract_text_pdf/plain/docx`; DOCX via `python-docx>=1.1.0`, added to requirements). Streamlit uploader accepts all four with per-ext MIME map (`_mime_for`). Verified live on the local API: TXT parses, `.doc` → 400 listing formats. 56 tests pass.
+- **Multi-format script upload (2026-08-21)**: PDF + TXT + MD/Markdown + DOCX accepted everywhere. `main.py` `_validate_upload()` + `ALLOWED_UPLOAD_EXTS` (= `PDFScriptParser.supported_extensions()`) guard `/upload`, `/jobs/upload`, `/analyze`; parser dispatches by extension (`_extract_text_pdf/plain/docx`; DOCX via `python-docx>=1.1.0`, added to requirements). Streamlit uploader accepts all four with per-ext MIME map (`_mime_for`). Verified live on the local API: TXT parses, `.doc` → 400 listing formats.
+- **Numbered speaker labels (2026-08-21)**: parser also recognizes `Speaker N – Role:` lines (`speaker_pattern_numbered`, en/em dash + hyphen; full label becomes the speaker name, e.g. `speaker 1 – host`; role hints still match substrings → host/guest/support). Sample script committed at `tests/Latest.txt` ("The Final Whistle", 3 speakers / 7 segments). 60 tests pass.
 - **51 tests pass** as of 2026-08-21 (retry/transient tests + background-equivalence test added). Fresh benchmark reel: `outputs/podcast_video_a555c4eb36b50caa50590fb07d65c910.mp4/.mp3/.srt` (190s, 12 segs, rendered in 79s).
 
 ### Web UI (`src/streamlit_app.py`) — v2, added 2026-08-19
