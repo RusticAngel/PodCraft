@@ -194,3 +194,89 @@ def test_audio_producer_uses_overrides(monkeypatch):
     })
     assert result["speaker_profiles"][0]["voice"] == "Aoede"
     assert result["speaker_profiles"][1]["voice"] == "Kore"
+
+
+def test_is_transient_detection():
+    from src.utils.api_retry import is_transient
+
+    class CodedError(Exception):
+        def __init__(self, code):
+            super().__init__(f"code {code}")
+            self.code = code
+
+    assert is_transient(CodedError(429))
+    assert is_transient(CodedError(503))
+    assert is_transient(CodedError(500))
+    assert is_transient(Exception("RESOURCE_EXHAUSTED: quota exceeded"))
+    assert is_transient(Exception("503 UNAVAILABLE"))
+    assert is_transient(Exception("INTERNAL internal error"))
+    assert is_transient(ConnectionError("connection reset"))
+    assert not is_transient(ValueError("bad request"))
+    assert not is_transient(CodedError(400))
+
+
+def test_call_with_retry_recovers_transient(monkeypatch):
+    from src.utils.api_retry import call_with_retry
+
+    sleeps = []
+    monkeypatch.setattr("src.utils.api_retry.time.sleep", lambda s: sleeps.append(s))
+
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            err = Exception("503 UNAVAILABLE")
+            err.code = 503
+            raise err
+        return "ok"
+
+    assert call_with_retry(flaky, retries=4, base_delay=0.1) == "ok"
+    assert calls["n"] == 3
+    assert len(sleeps) == 2
+
+
+def test_call_with_retry_raises_non_transient_immediately(monkeypatch):
+    from src.utils.api_retry import call_with_retry
+
+    monkeypatch.setattr("src.utils.api_retry.time.sleep", lambda s: None)
+    calls = {"n": 0}
+
+    def broken():
+        calls["n"] += 1
+        raise ValueError("invalid API key")
+
+    try:
+        call_with_retry(broken, retries=4)
+        raised = False
+    except ValueError:
+        raised = True
+    assert raised and calls["n"] == 1
+
+
+def test_retry_failed_segments_recovers(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    producer = AudioProducerAgent()
+    entries = [
+        {"index": 0, "speaker": "HOST", "text": "a", "audio_path": None, "voice": "Puck"},
+        {"index": 1, "speaker": "GUEST", "text": "b", "audio_path": "/x.wav", "voice": "Kore"},
+    ]
+
+    retried = []
+
+    def fake_tts(text, voice):
+        retried.append((text, voice))
+        return f"outputs/recovered_{len(retried)}.wav"
+
+    monkeypatch.setattr(producer.tts_tool, "generate_speech", fake_tts)
+    result = producer._retry_failed_segments(entries, pause_seconds=0)
+
+    assert retried == [("a", "Puck")]
+    assert result[0]["audio_path"] == "outputs/recovered_1.wav"
+    assert result[1]["audio_path"] == "/x.wav"
+
+
+def test_retry_failed_segments_noop_when_all_present():
+    producer = AudioProducerAgent()
+    entries = [{"index": 0, "speaker": "H", "text": "a", "audio_path": "/ok.wav", "voice": "Puck"}]
+    assert producer._retry_failed_segments(entries, pause_seconds=0) is entries

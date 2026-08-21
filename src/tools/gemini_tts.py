@@ -53,6 +53,8 @@ class GeminiTTSTool:
 
         try:
             client = self._get_client()
+            # Free-tier TTS allows only 10 req/day and tight per-minute
+            # quotas, so use a deeper retry budget than the default.
             response = call_with_retry(lambda: client.models.generate_content(
                 model=self.model,
                 contents=text,
@@ -66,7 +68,7 @@ class GeminiTTSTool:
                         }
                     },
                 },
-            ))
+            ), retries=6, base_delay=8.0, max_delay=90.0)
 
             mime_type = None
             audio_data = None

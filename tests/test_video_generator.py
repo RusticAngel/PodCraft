@@ -136,6 +136,50 @@ def test_frame_at_renders_playhead_and_banner(tmp_path):
     assert frame[270, 193].tolist() == [255, 255, 255]
 
 
+def test_precomputed_backgrounds_match_slow_path(tmp_path):
+    """The render-speed optimization must be pixel-identical to the
+    per-frame compositing it replaced."""
+    import numpy as np
+
+    gen = PodCraftVideoGenerator(str(tmp_path / "pack.zip"))
+    rng = np.random.default_rng(7)
+    base = rng.integers(0, 255, size=(540, 960, 3), dtype=np.uint8)
+
+    banner = np.zeros((540, 960, 4), dtype=np.uint8)
+    banner[:, :, :3] = (200, 100, 50)
+    banner[:, :, 3] = 255
+    subtitle = np.zeros((540, 960, 4), dtype=np.uint8)
+    subtitle[:, :, :3] = (10, 10, 10)
+    subtitle[:, :, 3] = 180
+    plan = [{
+        "start": 0.0, "end": 5.0, "entry": {"speaker": "HOST", "text": "hi"},
+        "name": "HOST", "color": (88, 166, 255),
+        "x0": 0, "x1": 480,
+        "banner": banner,
+        "subtitle": subtitle,
+    }]
+    title_overlay = np.zeros((540, 960, 4), dtype=np.uint8)
+    title_overlay[:100, :, :3] = (250, 250, 250)
+    title_overlay[:100, :, 3] = 255
+
+    bgs = gen._precompute_backgrounds(base, plan)
+    assert len(bgs) == 1
+
+    for t in (0.5, 2.0, 4.99):
+        fast = gen._frame_at(t, base, plan, title_overlay,
+                             intro_seconds=6.0, total=10.0, backgrounds=bgs)
+        slow = gen._frame_at(t, base, plan, title_overlay,
+                             intro_seconds=6.0, total=10.0)
+        assert np.array_equal(fast, slow), f"fast path diverged at t={t}"
+
+    # Playhead advances across frames sharing one cached background.
+    early = gen._frame_at(1.0, base, plan, title_overlay,
+                          intro_seconds=0.0, total=10.0, backgrounds=bgs)
+    late = gen._frame_at(8.0, base, plan, title_overlay,
+                         intro_seconds=0.0, total=10.0, backgrounds=bgs)
+    assert not np.array_equal(early[270], late[270])
+
+
 def test_video_generator_builds_pack_files(tmp_path):
     pack = _make_pack(str(tmp_path / "pack.zip"), tmp_path)
     gen = PodCraftVideoGenerator(pack)

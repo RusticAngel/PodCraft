@@ -322,35 +322,57 @@ class PodCraftVideoGenerator:
             })
         return plan
 
-    def _frame_at(self, t: float, base: "numpy.ndarray", plan: List[Dict],
-                  title_overlay: "numpy.ndarray", intro_seconds: float,
-                  total: float) -> "numpy.ndarray":
-        """Compose the frame for playback time t.
+    def _precompute_backgrounds(self, base: "numpy.ndarray",
+                                plan: List[Dict]) -> List["numpy.ndarray"]:
+        """Pre-composite every static layer (segment band + banner +
+        subtitle) into one background frame per segment.
 
-        Pure numpy compositing of pre-rendered overlays (no matplotlib or
-        text rendering per frame), so animation is fast: a moving playhead
-        + a translucent band over the currently-speaking segment.
+        Within a segment only the playhead moves between frames, so
+        baking the rest once turns per-frame work from ~50ms of float
+        blending into a single array copy (~1ms).
         """
         import numpy as np
 
-        frame = base.copy()
-        active = None
+        backgrounds = []
         for seg in plan:
-            if seg["start"] <= t < seg["end"] or (seg is plan[-1] and t >= seg["end"]):
-                active = seg
-                break
-        if active is None and plan:
-            active = plan[-1]
-
-        if active:
-            band = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
-            band[:, active["x0"]:active["x1"]] = active["color"]
+            frame = base.copy()
+            band = np.zeros_like(base)
+            band[:, seg["x0"]:seg["x1"]] = seg["color"]
             blend = 0.14
             frame = (frame.astype(np.float32) * (1 - blend)
                      + band.astype(np.float32) * blend).astype(np.uint8)
-            frame = self._composite(frame, active["banner"])
-            if active["subtitle"] is not None:
-                frame = self._composite(frame, active["subtitle"])
+            frame = self._composite(frame, seg["banner"])
+            if seg["subtitle"] is not None:
+                frame = self._composite(frame, seg["subtitle"])
+            backgrounds.append(frame)
+        return backgrounds
+
+    def _frame_at(self, t: float, base: "numpy.ndarray", plan: List[Dict],
+                  title_overlay: "numpy.ndarray", intro_seconds: float,
+                  total: float, backgrounds: Optional[List] = None) -> "numpy.ndarray":
+        """Compose the frame for playback time t.
+
+        Fast path: copy the pre-composited segment background and draw
+        the time-synced playhead. The intro title is composited only
+        during the first few seconds (~60 frames), which stays cheap.
+        """
+        import numpy as np
+
+        if backgrounds is None:
+            backgrounds = self._precompute_backgrounds(base, plan)
+
+        active_idx = None
+        for i, seg in enumerate(plan):
+            if seg["start"] <= t < seg["end"] or (i == len(plan) - 1 and t >= seg["end"]):
+                active_idx = i
+                break
+        if active_idx is None and plan:
+            active_idx = len(plan) - 1
+
+        if active_idx is not None:
+            frame = backgrounds[active_idx].copy()
+        else:
+            frame = base.copy()
 
         # Time-synced playhead across the whole waveform.
         x = min(FRAME_WIDTH - 1, max(0, int(t / total * FRAME_WIDTH))) if total else 0
@@ -403,7 +425,9 @@ class PodCraftVideoGenerator:
 
         # 2. Background waveform (baked with the pinned title + watermark)
         title = self._episode_title()
-        samples = audio.to_soundarray(fps=44100)
+        # The waveform plot only needs ~4000 points, so decode a
+        # low-rate mono mix instead of the full 44.1kHz signal.
+        samples = audio.to_soundarray(fps=11025)
         if samples.ndim > 1:
             samples = samples.mean(axis=1)
         step = max(1, len(samples) // 4000)
@@ -422,14 +446,17 @@ class PodCraftVideoGenerator:
         base = np.where(pinned[..., 3:4] > 0, pinned[:, :, :3], base)
         base = np.where(watermark[..., 3:4] > 0, watermark[:, :, :3], base)
 
-        # 3. Pre-render per-segment overlays once, then animate via make_frame.
+        # 3. Pre-render per-segment overlays + backgrounds once, then
+        # animate via make_frame (per-frame work: copy + playhead).
         plan = self._segment_plan(timed, total)
         intro_seconds = min(4.0, total)
         title_overlay = self._place_overlay(self._text_frame(title, font_size=72))
+        backgrounds = self._precompute_backgrounds(base, plan)
 
         def make_frame(t):
             return self._frame_at(
-                float(t), base, plan, title_overlay, intro_seconds, total
+                float(t), base, plan, title_overlay, intro_seconds, total,
+                backgrounds=backgrounds,
             )
 
         video = VideoClip(make_frame, duration=total)
