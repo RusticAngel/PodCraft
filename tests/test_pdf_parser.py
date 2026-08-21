@@ -114,3 +114,49 @@ def test_parser_skips_metadata_and_handles_parenthesized_speakers():
 
     seg_speakers = [seg["speaker"] for seg in data["dialogue_segments"]]
     assert seg_speakers == ["HOST", "GUEST", "HOST", "OUTRO (Narrator)"]
+
+
+_SCRIPT_LINES = [
+    "HOST: Hello and welcome to the show",
+    "GUEST: Thanks for having me, this is amazing",
+    "OUTRO (Narrator): See you next week!",
+]
+
+
+def test_parser_supports_txt_md_docx(tmp_path):
+    """The same script must parse identically from TXT, MD and DOCX."""
+    import docx as docx_lib
+
+    txt = tmp_path / "script.txt"
+    txt.write_text("\n".join(_SCRIPT_LINES), encoding="utf-8")
+
+    md = tmp_path / "script.md"
+    md.write_text("# Episode 1\n\n" + "\n".join(_SCRIPT_LINES), encoding="utf-8")
+
+    docx_path = tmp_path / "script.docx"
+    document = docx_lib.Document()
+    document.add_paragraph("Episode 1")
+    for line in _SCRIPT_LINES:
+        document.add_paragraph(line)
+    document.save(str(docx_path))
+
+    expected_speakers = ["host", "guest", "outro (narrator)"]
+    expected_segments = ["HOST", "GUEST", "OUTRO (Narrator)"]
+    for path in (txt, md, docx_path):
+        data = PDFScriptParser().parse(str(path))
+        assert data["speakers"] == expected_speakers, f"speakers differ for {path.suffix}"
+        got = [s["speaker"] for s in data["dialogue_segments"]]
+        assert got == expected_segments, f"segments differ for {path.suffix}"
+        assert all(s["text"] for s in data["dialogue_segments"])
+
+
+def test_parser_rejects_unsupported_extension(tmp_path):
+    bad = tmp_path / "script.doc"
+    bad.write_bytes(b"old binary word doc")
+    with pytest.raises(ValueError, match="Unsupported script format"):
+        PDFScriptParser().parse(str(bad))
+
+
+def test_supported_extensions_listed():
+    exts = PDFScriptParser.supported_extensions()
+    assert exts == [".docx", ".markdown", ".md", ".pdf", ".txt"]

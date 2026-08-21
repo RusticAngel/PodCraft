@@ -37,6 +37,19 @@ app.add_middleware(
 # Lazy orchestrator so the app boots minus API keys.
 _ORCHESTRATOR = None
 
+# Script formats accepted by /upload, /jobs/upload and /analyze.
+ALLOWED_UPLOAD_EXTS = tuple(PDFScriptParser.supported_extensions())
+
+
+def _validate_upload(file: UploadFile) -> None:
+    """Reject uploads whose extension the parser cannot handle."""
+    name = (file.filename or "").lower()
+    if not name.endswith(ALLOWED_UPLOAD_EXTS):
+        raise HTTPException(
+            400, f"Unsupported file type. Supported formats: "
+                 f"{', '.join(ALLOWED_UPLOAD_EXTS)}"
+        )
+
 # Background job registry (in-memory). Jobs are keyed by a UUID; each entry
 # holds status, result/error, and the pack token for follow-up downloads.
 _JOBS: dict = {}
@@ -258,10 +271,9 @@ def upload_script(
         None, description='JSON object mapping speaker names to voices, e.g. {"HOST":"Puck"}'
     ),
 ):
-    """Upload a podcast script PDF and run the full pipeline synchronously."""
+    """Upload a podcast script (PDF, TXT, MD or DOCX) and run the full pipeline synchronously."""
     try:
-        if not file.filename or not file.filename.lower().endswith(".pdf"):
-            raise HTTPException(400, "File must be a PDF")
+        _validate_upload(file)
         upload_path = _save_upload(file)
         overrides = _parse_voice_overrides(voice_overrides)
         return JSONResponse(_process_pipeline(upload_path, genre, max_segments, overrides))
@@ -282,8 +294,7 @@ def start_upload_job(
 ):
     """Start the full pipeline as a background job; returns a job id to poll."""
     try:
-        if not file.filename or not file.filename.lower().endswith(".pdf"):
-            raise HTTPException(400, "File must be a PDF")
+        _validate_upload(file)
         upload_path = _save_upload(file)
         overrides = _parse_voice_overrides(voice_overrides)
         job_id = _submit_job(
@@ -329,6 +340,7 @@ def get_job_status(job_id: str):
 def analyze_script_only(file: UploadFile = File(...)):
     """Analyze script without generating audio."""
     try:
+        _validate_upload(file)
         upload_path = _save_upload(file)
         parser = PDFScriptParser()
         script_data = parser.parse(upload_path)

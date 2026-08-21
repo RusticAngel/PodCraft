@@ -18,6 +18,18 @@ API_BASE = os.getenv("API_BASE", "http://localhost:8080").rstrip("/")
 DEMO_PDF = "static/demo_script.pdf"
 GENRES = ["technology", "business", "comedy", "education", "health", "sports", "general"]
 VOICES = ["Puck", "Charon", "Kore", "Fenrir", "Aoede", "Zephyr"]
+UPLOAD_EXTS = ["pdf", "txt", "md", "docx"]
+MIME_BY_EXT = {
+    ".pdf": "application/pdf",
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".markdown": "text/markdown",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+
+def _mime_for(name: str) -> str:
+    return MIME_BY_EXT.get(os.path.splitext(str(name))[1].lower(), "application/octet-stream")
 
 st.set_page_config(page_title="PodCraft", page_icon="🎙️", layout="wide")
 
@@ -57,7 +69,7 @@ def _poll_job(job_id, timeout_s=600, poll_s=3):
 
 
 def _start_upload_job(file_bytes, name, genre, max_segments, voice_overrides=None):
-    files = {"file": (name, file_bytes, "application/pdf")}
+    files = {"file": (name, file_bytes, _mime_for(name))}
     params = {"genre": genre}
     if max_segments:
         params["max_segments"] = max_segments
@@ -164,7 +176,10 @@ def main():
 
     col_btn, col_btn2 = st.columns([1, 1])
     with col_btn:
-        uploaded = st.file_uploader("📄 Upload your podcast script (PDF)", type=["pdf"])
+        uploaded = st.file_uploader(
+            "📄 Upload your podcast script (PDF, TXT, MD or DOCX)",
+            type=UPLOAD_EXTS,
+        )
     with col_btn2:
         st.markdown("**— or —**")
         try_demo = st.button("🚀 Try the Demo (bundled script)", type="primary")
@@ -179,15 +194,16 @@ def main():
     elif uploaded is not None:
         file_bytes, file_name = uploaded.getvalue(), uploaded.name
 
-    if file_bytes and not file_name.lower().endswith(".pdf"):
-        st.error("Please upload a PDF file.")
+    valid_upload = bool(file_bytes) and file_name.lower().endswith(tuple(UPLOAD_EXTS))
+    if file_bytes and not valid_upload:
+        st.error("Please upload a PDF, TXT, MD or DOCX file.")
 
     analyze = st.button("🔍 Analyze script & pick voices", type="primary",
-                        disabled=not file_bytes or not file_name.lower().endswith(".pdf"))
+                        disabled=not valid_upload)
     if analyze:
         try:
             with st.spinner("Analyzing script to detect speakers..."):
-                files = {"file": (file_name, file_bytes, "application/pdf")}
+                files = {"file": (file_name, file_bytes, _mime_for(file_name))}
                 resp = requests.post(f"{API_BASE}/analyze", files=files, timeout=120)
                 resp.raise_for_status()
                 script = resp.json().get("script_analysis") or {}

@@ -42,9 +42,37 @@ def test_root(client):
     assert client.get("/").json()["status"] == "running"
 
 
-def test_upload_rejects_non_pdf(client):
-    r = client.post("/upload", files={"file": ("x.txt", b"hi", "text/plain")})
+def test_upload_rejects_unsupported_type(client):
+    r = client.post("/upload", files={"file": ("x.doc", b"hi", "application/msword")})
     assert r.status_code == 400
+    assert "Supported formats" in r.json()["detail"]
+
+
+def test_analyze_accepts_txt(client):
+    script = "HOST: Hello there.\nGUEST: Great to be here."
+    r = client.post("/analyze", files={"file": ("s.txt", script.encode("utf-8"), "text/plain")})
+    assert r.status_code == 200
+    speakers = r.json()["script_analysis"]["speakers"]
+    assert "host" in speakers and "guest" in speakers
+
+
+def test_analyze_accepts_docx(client):
+    import io
+
+    import docx as docx_lib
+
+    buffer = io.BytesIO()
+    document = docx_lib.Document()
+    document.add_paragraph("HOST: Hello there.")
+    document.add_paragraph("GUEST: Great to be here.")
+    document.save(buffer)
+    r = client.post("/analyze", files={
+        "file": ("s.docx", buffer.getvalue(),
+                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+    })
+    assert r.status_code == 200
+    speakers = r.json()["script_analysis"]["speakers"]
+    assert "host" in speakers and "guest" in speakers
 
 
 def test_upload_rejects_invalid_voice_override(client):

@@ -1,10 +1,24 @@
+import os
+
 import PyPDF2
 import re
 from typing import Dict, List
 
 
 class PDFScriptParser:
-    """Extract structured data from podcast script PDFs."""
+    """Extract structured data from podcast scripts.
+
+    Accepts PDF, plain text (.txt), Markdown (.md/.markdown) and Word
+    (.docx) files; everything after text extraction is format-agnostic.
+    """
+
+    # Extensions handled without a PDF library.
+    PLAIN_TEXT_EXTS = {".txt", ".md", ".markdown"}
+    DOCX_EXTS = {".docx"}
+
+    @classmethod
+    def supported_extensions(cls) -> List[str]:
+        return sorted(cls.PLAIN_TEXT_EXTS | cls.DOCX_EXTS | {".pdf"})
 
     # Allows all-caps speaker labels with an optional trailing parenthetical
     # (e.g. "OUTRO (Narrator):"), while excluding common header metadata.
@@ -44,6 +58,20 @@ class PDFScriptParser:
         }
 
     def _extract_text(self, pdf_path: str) -> str:
+        """Extract raw text, dispatching on the file extension."""
+        ext = os.path.splitext(str(pdf_path))[1].lower()
+        if ext == ".pdf":
+            return self._extract_text_pdf(pdf_path)
+        if ext in self.PLAIN_TEXT_EXTS:
+            return self._extract_text_plain(pdf_path)
+        if ext in self.DOCX_EXTS:
+            return self._extract_text_docx(pdf_path)
+        raise ValueError(
+            f"Unsupported script format '{ext or 'unknown'}'. "
+            f"Supported: {', '.join(self.supported_extensions())}"
+        )
+
+    def _extract_text_pdf(self, pdf_path: str) -> str:
         """Extract raw text from PDF."""
         with open(pdf_path, 'rb') as file:
             reader = PyPDF2.PdfReader(file)
@@ -53,6 +81,25 @@ class PDFScriptParser:
                 if page_text:
                     text += page_text + "\n"
         return text
+
+    @staticmethod
+    def _extract_text_plain(path: str) -> str:
+        """Read a plain-text / Markdown script directly."""
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+
+    @staticmethod
+    def _extract_text_docx(path: str) -> str:
+        """Extract paragraph text from a Word .docx script."""
+        try:
+            import docx
+        except ImportError as exc:
+            raise ValueError(
+                "DOCX support requires the 'python-docx' package "
+                "(pip install python-docx)"
+            ) from exc
+        document = docx.Document(path)
+        return "\n".join(p.text for p in document.paragraphs if p.text.strip())
 
     def _extract_speakers(self, text: str) -> List[str]:
         """Extract speaker names from script."""
