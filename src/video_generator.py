@@ -60,10 +60,11 @@ class PodCraftVideoGenerator:
     """Generate an episode video from a PodCraft production pack ZIP."""
 
     def __init__(self, pack_path: str, output_path: str = None, title: str = None,
-                 burn_subtitles: bool = True):
+                 burn_subtitles: bool = True, music_volume: float = None):
         self.pack_path = pack_path
         self.title = title or "PodCraft Episode"
         self.burn_subtitles = burn_subtitles
+        self.music_volume = music_volume if music_volume is not None else MUSIC_VOLUME
         token = stable_token(os.path.basename(pack_path))
         self.token = token
         self.output_path = output_path or os.path.join(
@@ -246,7 +247,7 @@ class PodCraftVideoGenerator:
         music_path = self._resolve(files, (self.manifest.get("audio_production") or {}).get("music_path"))
         if music_path and os.path.exists(music_path):
             try:
-                music = AudioFileClip(music_path).with_volume_scaled(MUSIC_VOLUME)
+                music = AudioFileClip(music_path).with_volume_scaled(self.music_volume)
                 total = voice.duration
                 bed = music
                 if bed.duration < total:
@@ -484,6 +485,12 @@ class PodCraftVideoGenerator:
         }
 
 
-def generate_video_from_pack(pack_path: str, output_path: str = None, title: str = None) -> Dict[str, str]:
-    """One-call convenience: render a video + mp3 + srt from a pack ZIP."""
-    return PodCraftVideoGenerator(pack_path, output_path=output_path, title=title).generate()
+def generate_video_from_pack(pack_path: str, output_path: str = None, title: str = None,
+                             music_volume: float = None) -> Dict[str, str]:
+    """One-call convenience: render a video + mp3 + srt from a pack ZIP.
+
+    music_volume overrides the bed volume (e.g. 0.126 == -18 dB ducking).
+    """
+    return PodCraftVideoGenerator(
+        pack_path, output_path=output_path, title=title, music_volume=music_volume
+    ).generate()

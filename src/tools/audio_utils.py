@@ -42,7 +42,7 @@ def read_wav_signal(audio_path: str) -> Optional[Tuple[int, int, list]]:
 
 
 def synth_placeholder_wav(mood: str = "calm", duration_seconds: int = 30,
-                          sample_rate: int = 44100) -> str:
+                          sample_rate: int = 44100, intensity: float = 1.0) -> str:
     """Generate a mood-tinted ambient pad WAV as a fallback when no music
     API key is available. Not a replacement for Lyria - just keeps the
     pipeline demo-able without credentials.
@@ -51,6 +51,9 @@ def synth_placeholder_wav(mood: str = "calm", duration_seconds: int = 30,
     gentle tremolo and a fade envelope), NOT static: the tremolo amplitude
     is floored so the tone never drops to zero, and the noise is a faint
     low-passed "air" instead of white static.
+
+    intensity (0.05-1.0) scales the note gain, doubling as the prototype's
+    "bold vs subtle" music control when Lyria is unavailable.
     """
     output_dir = "./outputs"
     os.makedirs(output_dir, exist_ok=True)
@@ -72,7 +75,8 @@ def synth_placeholder_wav(mood: str = "calm", duration_seconds: int = 30,
     # Reuse the deterministic hash util to avoid Python hash() randomization.
     from src.utils.file_handlers import stable_token
 
-    seed = int(stable_token(mood + str(duration_seconds)), 16) % (2 ** 32)
+    intensity = max(0.05, min(1.0, float(intensity)))
+    seed = int(stable_token(f"{mood}{duration_seconds}{intensity}"), 16) % (2 ** 32)
     rng = random.Random(seed)
 
     # Chord: root + third + fifth. Third is minor or major depending on mood.
@@ -80,7 +84,8 @@ def synth_placeholder_wav(mood: str = "calm", duration_seconds: int = 30,
     fifth_ratio = 2 ** (7 / 12)
     notes = [base_hz, base_hz * third_ratio, base_hz * fifth_ratio]
 
-    note_amp = 0.045  # per-note amplitude -> peak roughly -19 dBFS
+    # note_amp -> peak roughly -19 dBFS at intensity 1.0; "subtle" stays audible.
+    note_amp = 0.045 * (0.55 + 0.45 * intensity)
     total = int(sample_rate * duration_seconds)
 
     # Fade envelope: smooth attack/release so the pad doesn't click.
@@ -120,7 +125,7 @@ def synth_placeholder_wav(mood: str = "calm", duration_seconds: int = 30,
         noise_prev = 0.85 * noise_prev + rng.uniform(-9, 9)
         samples.append(int(amp * acc + 0.12 * noise_prev))
 
-    filename = f"music_{mood}_{duration_seconds}s_placeholder.wav"
+    filename = f"music_{mood}_{duration_seconds}s_i{int(intensity * 100)}_placeholder.wav"
     output_path = os.path.join(output_dir, filename)
     _write_wav(output_path, sample_rate, samples)
     return output_path

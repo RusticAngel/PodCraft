@@ -31,32 +31,45 @@ class LyriaMusicTool:
     def configured(self) -> bool:
         return bool(self.api_key)
 
-    def generate_music(self, mood: str = "calm", duration_seconds: int = 30) -> Optional[str]:
-        """Generate background music matching the mood."""
+    def generate_music(self, mood: str = "calm", duration_seconds: int = 30,
+                       intensity: float = 1.0) -> Optional[str]:
+        """Generate background music matching the mood.
+
+        intensity (0.05-1.0) is the "subtle vs bold" music control from the
+        Studio UI: it nudges the Lyria prompt and scales the placeholder bed.
+        """
         ensure_dirs(Config.OUTPUT_DIR)
 
-        real = self._generate_lyria(mood, duration_seconds)
+        real = self._generate_lyria(mood, duration_seconds, intensity)
         if real:
             return real
 
         print("Music: using placeholder generation (Lyria key not configured or unavailable)")
-        return synth_placeholder_wav(mood, duration_seconds)
+        return synth_placeholder_wav(mood, duration_seconds, intensity=intensity)
 
-    def _generate_lyria(self, mood: str, duration_seconds: int) -> Optional[str]:
+    def _generate_lyria(self, mood: str, duration_seconds: int,
+                        intensity: float = 1.0) -> Optional[str]:
         if not self.configured:
             return None
         try:
             client = self._get_client()
+            gain = _intensity_phrase(intensity)
             prompt = (
                 f"Create a {duration_seconds}-second {mood} background music bed "
-                "for a podcast, gentle piano and soft strings, no vocals, "
+                f"for a podcast, gentle piano and soft strings, no vocals, {gain}, "
                 "professional mastering quality."
             )
-            response = call_with_retry(lambda: client.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config={"response_modalities": ["AUDIO"]},
-            ))
+            # Lyria is paid-only (no free tier): a 429 is terminal for us, so a
+            # single fast attempt avoids a multi-minute retry storm on free keys
+            # before falling back to the placeholder bed.
+            response = call_with_retry(
+                lambda: client.models.generate_content(
+                    model=self.model,
+                    contents=prompt,
+                    config={"response_modalities": ["AUDIO"]},
+                ),
+                retries=1,
+            )
 
             audio_data = None
             mime_type = "audio/mpeg"
@@ -78,3 +91,15 @@ class LyriaMusicTool:
         except Exception as e:
             print(f"Lyria error: {e}")
             return None
+
+
+def _intensity_phrase(intensity: float) -> str:
+    """Map the 0.05-1.0 intensity slider onto a mixing prompt phrase."""
+    intensity = max(0.05, min(1.0, float(intensity)))
+    if intensity <= 0.25:
+        return "very subtle, barely-there bed"
+    if intensity <= 0.5:
+        return "gentle and unobtrusive bed"
+    if intensity <= 0.75:
+        return "present but understated bed"
+    return "prominent, full bed"

@@ -46,12 +46,15 @@ class AudioProducerAgent(BaseAgent):
         return self._coerce_config(config)
 
     def run(self, script_data: Dict, director_analysis: Dict, max_segments: int = None,
-            voice_overrides: Dict = None) -> Any:
+            voice_overrides: Dict = None, music_mood: str = None,
+            music_intensity: float = None, duck_db: int = None) -> Any:
         """Generate audio assets from script and analysis.
 
         max_segments limits how many dialogue segments get rendered to
         speech ("lite demo mode") so free-tier daily TTS quota is preserved.
         voice_overrides maps a speaker name to a preferred TTS voice.
+        music_mood / music_intensity / duck_db come from the Studio's
+        "Music & mix" panel and steer the bed (plus the video mix ducking).
         """
         input_payload = {
             "dialogue_segments": script_data.get("dialogue_segments", []),
@@ -61,6 +64,9 @@ class AudioProducerAgent(BaseAgent):
             "structure": (director_analysis or {}).get("structure", {}),
             "max_segments": max_segments,
             "voice_overrides": voice_overrides or {},
+            "music_mood": music_mood,
+            "music_intensity": music_intensity,
+            "duck_db": duck_db,
         }
 
         if not self.uses_agent_engine:
@@ -83,6 +89,10 @@ class AudioProducerAgent(BaseAgent):
         tone = production_params.get("tone", "neutral")
         max_segments = production_params.get("max_segments")
         voice_overrides = production_params.get("voice_overrides") or {}
+
+        music_mood = production_params.get("music_mood") or tone or "neutral"
+        music_intensity = max(0.05, min(1.0, float(production_params.get("music_intensity") or 0.6)))
+        duck_db = int(production_params.get("duck_db") or -18)
 
         selected, original_indices = self._pick_segments(segments, max_segments)
 
@@ -111,7 +121,9 @@ class AudioProducerAgent(BaseAgent):
 
         audio_files = self._retry_failed_segments(audio_files)
 
-        music_path = self.music_tool.generate_music(tone, duration_seconds=30)
+        music_path = self.music_tool.generate_music(
+            music_mood, duration_seconds=30, intensity=music_intensity
+        )
 
         sentiment = self.sentiment_tool.analyze_sentiment(
             script_text=" ".join([s.get("text", "") for s in segments if s.get("text")])
@@ -120,6 +132,11 @@ class AudioProducerAgent(BaseAgent):
         return {
             "audio_files": audio_files,
             "music_path": music_path,
+            "music_config": {
+                "mood": music_mood,
+                "intensity": round(music_intensity, 2),
+                "duck_db": duck_db,
+            },
             "sentiment_analysis": sentiment,
             "speaker_profiles": speaker_profiles,
             "total_segments": len(audio_files),

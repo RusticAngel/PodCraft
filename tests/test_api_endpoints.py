@@ -42,6 +42,25 @@ def test_root(client):
     assert client.get("/").json()["status"] == "running"
 
 
+def test_vibes_endpoint(client):
+    r = client.get("/vibes")
+    assert r.status_code == 200
+    vibes = r.json()["vibes"]
+    assert len(vibes) >= 5
+    assert all(v["id"] and v["name"] and v["emoji"] and v["genre"] for v in vibes)
+    assert all(len(v["colors"]) >= 2 for v in vibes)
+
+
+def test_voices_endpoint(client):
+    r = client.get("/voices")
+    assert r.status_code == 200
+    voices = r.json()["voices"]
+    assert len(voices) >= 4
+    names = [v["name"] for v in voices]
+    assert "Puck" in names and "Kore" in names
+    assert all(v["name"] in {"Puck", "Charon", "Kore", "Fenrir", "Aoede", "Zephyr"} for v in voices)
+
+
 def test_upload_rejects_unsupported_type(client):
     r = client.post("/upload", files={"file": ("x.doc", b"hi", "application/msword")})
     assert r.status_code == 400

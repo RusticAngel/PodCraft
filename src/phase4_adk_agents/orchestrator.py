@@ -29,7 +29,8 @@ class PodcastOrchestrator:
         self.parallel_tool = ParallelResearchTool()
 
     def process_script(self, pdf_path: str, genre: str = "general", max_segments: int = None,
-                       voice_overrides: Dict = None) -> Dict:
+                       voice_overrides: Dict = None, music_mood: str = None,
+                       music_intensity: float = None, duck_db: int = None) -> Dict:
         """
         Complete multi-agent pipeline:
         1. Parse PDF -> structured data
@@ -39,7 +40,8 @@ class PodcastOrchestrator:
 
         max_segments limits rendered speech segments (lite demo mode) to
         preserve free-tier daily TTS quota. voice_overrides maps a speaker
-        name to a preferred TTS voice.
+        name to a preferred TTS voice. music_mood / music_intensity /
+        duck_db steer the music bed (Studio "Music & mix" panel).
         """
         os.makedirs("./uploads", exist_ok=True)
         os.makedirs("./outputs", exist_ok=True)
@@ -56,7 +58,8 @@ class PodcastOrchestrator:
 
         print("\U0001f3b5 Step 4: Producer generating audio...")
         audio_output = self.producer.run(
-            script_data, director_analysis, max_segments, voice_overrides
+            script_data, director_analysis, max_segments, voice_overrides,
+            music_mood=music_mood, music_intensity=music_intensity, duck_db=duck_db,
         )
 
         print("\u2705 Orchestration complete!")

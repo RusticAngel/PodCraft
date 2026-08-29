@@ -103,15 +103,20 @@ def _save_upload(file: UploadFile) -> str:
 
 
 def _process_pipeline(upload_path: str, genre: str, max_segments: Optional[int],
-                      voice_overrides: Optional[dict] = None) -> dict:
+                      voice_overrides: Optional[dict] = None,
+                      music_mood: Optional[str] = None,
+                      music_intensity: Optional[float] = None,
+                      duck_db: Optional[int] = None) -> dict:
     """Run the full production pipeline and return the /upload response body.
 
     Extracted from the endpoint so both sync and background/job flows share
-    one implementation.
+    one implementation. Music controls (mood/intensity/duck) come from the
+    Studio UI and flow into the bed + video mix.
     """
     orchestrator = get_orchestrator()
     result = orchestrator.process_script(
-        upload_path, genre, max_segments, voice_overrides
+        upload_path, genre, max_segments, voice_overrides,
+        music_mood=music_mood, music_intensity=music_intensity, duck_db=duck_db,
     )
 
     for entry in (result.get("audio_production") or {}).get("audio_files") or []:
@@ -144,7 +149,14 @@ def _run_video_job(token: str, title: str = None) -> dict:
         manifest = json.loads(zf.read("production_manifest.json"))
     resolved_title = title or (manifest.get("episode_meta") or {}).get("title") or "PodCraft Episode"
 
-    outputs = generate_video_from_pack(pack_path, title=resolved_title)
+    music_config = (manifest.get("audio_production") or {}).get("music_config") or {}
+    duck_db = music_config.get("duck_db")
+    # Duck value is stored in dB (e.g. -18); linear bed volume = 10^(dB/20).
+    music_volume = (10 ** (duck_db / 20)) if isinstance(duck_db, (int, float)) else None
+
+    outputs = generate_video_from_pack(
+        pack_path, title=resolved_title, music_volume=music_volume
+    )
     _add_to_pack(
         pack_path,
         outputs.get("video_path"),
@@ -270,13 +282,25 @@ def upload_script(
     voice_overrides: Optional[str] = Query(
         None, description='JSON object mapping speaker names to voices, e.g. {"HOST":"Puck"}'
     ),
+    music_mood: Optional[str] = Query(
+        None, description="Music bed mood preset: auto/calm/happy/excited/serious/nervous/sad/funny/neutral"
+    ),
+    music_intensity: Optional[float] = Query(
+        None, ge=0.05, le=1.0, description="Music bed intensity (0.05 subtle .. 1.0 bold)"
+    ),
+    duck_db: Optional[int] = Query(
+        None, ge=-40, le=0, description="Music ducking under dialogue in dB (0..-40)"
+    ),
 ):
     """Upload a podcast script (PDF, TXT, MD or DOCX) and run the full pipeline synchronously."""
     try:
         _validate_upload(file)
         upload_path = _save_upload(file)
         overrides = _parse_voice_overrides(voice_overrides)
-        return JSONResponse(_process_pipeline(upload_path, genre, max_segments, overrides))
+        return JSONResponse(_process_pipeline(
+            upload_path, genre, max_segments, overrides,
+            music_mood=music_mood, music_intensity=music_intensity, duck_db=duck_db,
+        ))
     except HTTPException:
         raise
     except Exception as e:
@@ -291,6 +315,15 @@ def start_upload_job(
     voice_overrides: Optional[str] = Query(
         None, description='JSON object mapping speaker names to voices, e.g. {"HOST":"Puck"}'
     ),
+    music_mood: Optional[str] = Query(
+        None, description="Music bed mood preset: auto/calm/happy/excited/serious/nervous/sad/funny/neutral"
+    ),
+    music_intensity: Optional[float] = Query(
+        None, ge=0.05, le=1.0, description="Music bed intensity (0.05 subtle .. 1.0 bold)"
+    ),
+    duck_db: Optional[int] = Query(
+        None, ge=-40, le=0, description="Music ducking under dialogue in dB (0..-40)"
+    ),
 ):
     """Start the full pipeline as a background job; returns a job id to poll."""
     try:
@@ -299,7 +332,10 @@ def start_upload_job(
         overrides = _parse_voice_overrides(voice_overrides)
         job_id = _submit_job(
             "upload",
-            lambda: _process_pipeline(upload_path, genre, max_segments, overrides),
+            lambda: _process_pipeline(
+                upload_path, genre, max_segments, overrides,
+                music_mood=music_mood, music_intensity=music_intensity, duck_db=duck_db,
+            ),
         )
         return {"status": "started", "job_id": job_id}
     except HTTPException:
@@ -387,6 +423,22 @@ def generate_video(
         raise
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+@app.get("/vibes")
+async def list_vibes():
+    """Studio vibe presets (names, paired gradient colors, genre mapping)."""
+    from src.vibe_mapper import VIBES
+
+    return {"status": "ok", "vibes": VIBES}
+
+
+@app.get("/voices")
+async def list_voices():
+    """Available Gemini TTS voices with display metadata for the Studio UI."""
+    from src.voice_manager import VOICES
+
+    return {"status": "ok", "voices": VOICES}
 
 
 @app.get("/rss")
