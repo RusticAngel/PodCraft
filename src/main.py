@@ -384,6 +384,7 @@ def get_job_status(job_id: str):
         body["result"] = job["result"]
     elif job["status"] == "error":
         body["error"] = job["error"]
+    body["progress"] = job.get("progress", {})
     return body
 
 
