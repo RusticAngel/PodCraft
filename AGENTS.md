@@ -97,6 +97,13 @@ src/
 
 Purpose: preserve free-tier daily TTS quota during demos (Lyria is hard-quota'd at 0 on free tier → ALWAYS falls back to `synth_placeholder_wav`; verified live). Placeholder was overhauled 2026-08-21 to sound like a music bed (floored tremolo + chord pad root/third/fifth + fade envelope) instead of static: zero-crossing rate ~460-850/s (was 3911), peak ~-16 to -20 dBFS, noise-only zone ~5% (was 20.7%).
 
+### Full Episode export (mixed MP3) — added 2026-08-29
+- `src/tools/audio_mixer.py` — `AudioMixer(pack_path, music_volume=0.15)`: `extract_pack()` (unzips, re-anchors basenames, reads manifest), static `order_segments()` (sorts by manifest `index`, fallback `order`), `mix_episode()` (concatenate voice clips in order under a looped/subclipped ducked bed → `write_audiofile(fps=44100, codec="libmp3lame")`, lazy moviepy import like video_generator), idempotent `add_to_pack()` (appends as `full_episode.mp3`, skips if present), `run()` → `{mp3_path, pack_path, duration}`. Helper `volume_from_duck_db(db)` = `10**(db/20)` clamped [0,1] (matches video mix; -18 → ~0.126).
+- `POST /export/episode?pack_token=...&music_volume=` (sync `def`, mirrors `/video`): resolves `_find_pack`, defaults `music_volume` from manifest `music_config.duck_db`; writes `outputs/full_episode_{token}.mp3`, appends to pack; returns `{status, download_url:/pack/{token}, mp3_url:/download/..., duration_seconds}`. 404 unknown token.
+- UI (`streamlit_app.py` results): "🎵 Full Episode — one mixed MP3" panel with 📥 Export Full Episode button → POST → inline `st.audio` preview + "Episode MP3" / "Updated pack (ZIP)" links.
+- Tests (now **78 pass**): `tests/test_audio_mixer.py` (ordering by index & order, ducking mapping/clamps, real 2+1 wav mix duration, pack append idempotency) + `test_export_episode_endpoint`/`_unknown_token` in test_api_endpoints. Locally verified: 3-seg real pack (HOST→GUEST→OUTRO) mixed 38.58s, music_config duck -12dB → 0.2512, full_episode.mp3 inside pack.
+- Note: mixing is synchronous (moviepy one-shot, ~10-20s; imageio-ffmpeg bundled exe used — no system ffmpeg needed).
+
 ### Video generation (`src/video_generator.py`) — v2, added 2026-08-19
 `PodCraftVideoGenerator(pack_path, output_path=None, title=None)` + `generate_video_from_pack()`:
 - Consumes the `/upload` pack ZIP (`production_manifest.json` + WAVs).

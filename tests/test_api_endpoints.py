@@ -196,3 +196,42 @@ def test_pack_download(client):
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/zip"
     assert len(r.content) > 0
+
+
+def test_export_episode_endpoint(client):
+    """Export mixes a pack into full_episode.mp3 and serves the updated pack."""
+    from src.tools.audio_utils import synth_placeholder_wav
+
+    seg = synth_placeholder_wav("calm", duration_seconds=2)
+    music = synth_placeholder_wav("sad", duration_seconds=3)
+    result = {
+        "audio_production": {
+            "audio_files": [{"speaker": "Host", "index": 0, "text": "hi", "audio_path": seg}],
+            "music_path": music,
+        }
+    }
+    from src.main import _build_pack
+
+    pack_path = _build_pack(os.path.join("uploads", "export_pack_test.pdf"), result)
+    token = os.path.basename(pack_path).replace("podcraft_pack_", "").replace(".zip", "")
+
+    r = client.post("/export/episode", params={"pack_token": token})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "success"
+    assert body["download_url"] == f"/pack/{token}"
+    assert "mp3_url" in body
+
+    mp3 = client.get(body["mp3_url"])
+    assert mp3.status_code == 200
+    assert len(mp3.content) > 500
+
+    import io
+
+    with zipfile.ZipFile(io.BytesIO(client.get(f"/pack/{token}").content)) as zf:
+        assert "full_episode.mp3" in zf.namelist()
+
+
+def test_export_episode_unknown_token(client):
+    r = client.post("/export/episode", params={"pack_token": "does-not-exist-123"})
+    assert r.status_code == 404

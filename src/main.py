@@ -425,6 +425,51 @@ def generate_video(
         raise HTTPException(500, str(e))
 
 
+@app.post("/export/episode")
+def export_full_episode(
+    pack_token: str = Query(..., description="Token from /upload response"),
+    music_volume: Optional[float] = Query(
+        None, ge=0.0, le=1.0,
+        description="Music bed volume override; defaults to the pack's ducking (music_config.duck_db)",
+    ),
+):
+    """Export a single mixed MP3 of the full episode and add it to the pack.
+
+    Orders the manifest's speech segments by script index, mixes them under a
+    ducked music bed, writes ``full_episode.mp3``, and appends it into the
+    pack (idempotent) so one ZIP download carries every asset. Mirrors the
+    video mix, so the episode MP3 and the video's audio agree on volume.
+    """
+    try:
+        pack_path = _find_pack(pack_token)
+
+        if music_volume is None:
+            with zipfile.ZipFile(pack_path) as zf:
+                manifest = json.loads(zf.read("production_manifest.json"))
+            duck_db = ((manifest.get("audio_production") or {}).get("music_config") or {}).get("duck_db")
+            music_volume = None
+            if isinstance(duck_db, (int, float)) and not isinstance(duck_db, bool):
+                from src.tools.audio_mixer import volume_from_duck_db
+
+                music_volume = volume_from_duck_db(duck_db)
+
+        from src.tools.audio_mixer import AudioMixer
+
+        out = AudioMixer(pack_path, music_volume=music_volume).run()
+        return JSONResponse({
+            "status": "success",
+            "message": "Full episode exported and added to the pack",
+            "pack_token": pack_token,
+            "download_url": f"/pack/{pack_token}",
+            "mp3_url": f"/download/{os.path.basename(os.path.normpath(out['mp3_path']))}",
+            "duration_seconds": out.get("duration"),
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @app.get("/vibes")
 async def list_vibes():
     """Studio vibe presets (names, paired gradient colors, genre mapping)."""

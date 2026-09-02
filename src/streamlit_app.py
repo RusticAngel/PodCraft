@@ -383,6 +383,47 @@ def _render_results(data: dict, pack_token: str) -> None:
             )
             _panel("Recommendations", "🗂️", items)
 
+    st.markdown(
+        '<div class="panel-box" style="margin-top:1rem"><p class="panel-title">🎵 Full Episode — one mixed MP3</p>',
+        unsafe_allow_html=True,
+    )
+    if st.button("📥 Export Full Episode (MP3)", type="primary"):
+        with st.spinner("Mixing episode… this takes ~10-20 seconds."):
+            try:
+                resp = requests.post(
+                    f"{_api_base()}/export/episode",
+                    params={"pack_token": pack_token},
+                    timeout=180,
+                )
+                resp.raise_for_status()
+                body = resp.json()
+                mp3 = requests.get(f"{_api_base()}{body['mp3_url']}", timeout=120)
+                mp3.raise_for_status()
+                dur = body.get("duration_seconds")
+                st.success(
+                    "✅ Full episode exported — every voice clip in script order, "
+                    "music ducked under voice." + (f" ({dur}s)" if dur else "")
+                )
+                st.audio(mp3.content, format="audio/mpeg")
+                a, b = st.columns(2)
+                a.markdown(
+                    f'<a class="btn-cta" href="{_api_base()}{body["mp3_url"]}">⬇️ Episode MP3</a>',
+                    unsafe_allow_html=True,
+                )
+                b.markdown(
+                    f'<a class="btn-cta" href="{_api_base()}{body["download_url"]}">⬇️ Updated pack (ZIP)</a>',
+                    unsafe_allow_html=True,
+                )
+            except Exception as e:
+                st.error(f"❌ Export failed: {e}")
+    else:
+        st.markdown(
+            '<p class="hint" style="font-size:.8rem">Concatenates every voice clip in script order and '
+            "lays the music bed underneath at ducked volume — then adds the MP3 to your pack.</p>",
+            unsafe_allow_html=True,
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
+
     if st.button("🎬 Generate video (MP4)", type="primary"):
         try:
             job_id = _start_video_job(pack_token)
