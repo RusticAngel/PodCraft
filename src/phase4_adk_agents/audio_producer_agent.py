@@ -47,7 +47,8 @@ class AudioProducerAgent(BaseAgent):
 
     def run(self, script_data: Dict, director_analysis: Dict, max_segments: int = None,
             voice_overrides: Dict = None, music_mood: str = None,
-            music_intensity: float = None, duck_db: int = None) -> Any:
+            music_intensity: float = None, duck_db: int = None,
+            progress: dict = None) -> Any:
         """Generate audio assets from script and analysis.
 
         max_segments limits how many dialogue segments get rendered to
@@ -55,6 +56,7 @@ class AudioProducerAgent(BaseAgent):
         voice_overrides maps a speaker name to a preferred TTS voice.
         music_mood / music_intensity / duck_db come from the Studio's
         "Music & mix" panel and steer the bed (plus the video mix ducking).
+        progress is an optional mutable dict for coarse status updates.
         """
         input_payload = {
             "dialogue_segments": script_data.get("dialogue_segments", []),
@@ -67,6 +69,7 @@ class AudioProducerAgent(BaseAgent):
             "music_mood": music_mood,
             "music_intensity": music_intensity,
             "duck_db": duck_db,
+            "_progress": progress,
         }
 
         if not self.uses_agent_engine:
@@ -89,19 +92,27 @@ class AudioProducerAgent(BaseAgent):
         tone = production_params.get("tone", "neutral")
         max_segments = production_params.get("max_segments")
         voice_overrides = production_params.get("voice_overrides") or {}
+        progress = production_params.get("_progress")
+
+        def _update_progress(**kw):
+            if progress is not None:
+                progress.update(kw)
 
         music_mood = production_params.get("music_mood") or tone or "neutral"
         music_intensity = max(0.05, min(1.0, float(production_params.get("music_intensity") or 0.6)))
         duck_db = int(production_params.get("duck_db") or -18)
 
         selected, original_indices = self._pick_segments(segments, max_segments)
+        total = len(selected)
+        _update_progress(stage="voices", done=0, total=total)
 
         speaker_profiles = self.speaker_identifier.identify(
             speakers, selected, voice_overrides=voice_overrides
         )
 
         audio_files = []
-        for index, segment in zip(original_indices, selected):
+        for i, (index, segment) in enumerate(zip(original_indices, selected)):
+            _update_progress(stage=f"voice {i+1}/{total}", done=i, total=total)
             speaker = segment.get("speaker", "Narrator")
             text = segment.get("text", "")
             if not text:
@@ -119,15 +130,20 @@ class AudioProducerAgent(BaseAgent):
                 "voice": voice,
             })
 
+        _update_progress(stage="retrying failed", done=total, total=total)
         audio_files = self._retry_failed_segments(audio_files)
 
+        _update_progress(stage="music", done=total, total=total)
         music_path = self.music_tool.generate_music(
             music_mood, duration_seconds=30, intensity=music_intensity
         )
 
+        _update_progress(stage="sentiment", done=total, total=total)
         sentiment = self.sentiment_tool.analyze_sentiment(
             script_text=" ".join([s.get("text", "") for s in segments if s.get("text")])
         )
+
+        _update_progress(stage="packaging", done=total, total=total)
 
         return {
             "audio_files": audio_files,

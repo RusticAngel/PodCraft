@@ -30,7 +30,8 @@ class PodcastOrchestrator:
 
     def process_script(self, pdf_path: str, genre: str = "general", max_segments: int = None,
                        voice_overrides: Dict = None, music_mood: str = None,
-                       music_intensity: float = None, duck_db: int = None) -> Dict:
+                       music_intensity: float = None, duck_db: int = None,
+                       progress: dict = None) -> Dict:
         """
         Complete multi-agent pipeline:
         1. Parse PDF -> structured data
@@ -60,6 +61,7 @@ class PodcastOrchestrator:
         audio_output = self.producer.run(
             script_data, director_analysis, max_segments, voice_overrides,
             music_mood=music_mood, music_intensity=music_intensity, duck_db=duck_db,
+            progress=progress,
         )
 
         print("\u2705 Orchestration complete!")

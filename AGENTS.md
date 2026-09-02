@@ -120,6 +120,16 @@ Purpose: preserve free-tier daily TTS quota during demos (Lyria is hard-quota'd 
 - `_process_pipeline(upload_path, genre, max_segments)` and `_run_video_job(token, title)` are the shared core functions used by both the sync endpoints and the background jobs.
 - `POST /jobs/upload` + `POST /jobs/video` start work on a daemon thread via `_submit_job`; `GET /jobs/{id}` returns `{status: running|done|error, result, error, token}`. In-memory `_JOBS` dict guarded by `_JOBS_LOCK`. Streamlit UI polls these instead of holding a single long request.
 - `_JOBS` is in-memory → job state does not survive a restart (fine for a demo; GCS + a real queue is the post-hackathon upgrade).
+- `_submit_job` now creates a mutable `progress` dict (`{stage, done, total}`) per job, passes it to `fn(progress)`. The pipeline thread writes to it in-place; `_get_job` returns a shallow copy for the UI to poll.
+
+### Async produce + fragment polling (added 2026-08-29, fix 900s timeout kill)
+- **Problem**: the old `_produce()` held the Streamlit script run (one long HTTP request) open for the full 10–25 min produce via `_poll_job()`'s while-loop. Cloud Run's `timeoutSeconds=900` killed the request at 15 min → no results rendered.
+- **Fix**: `_start_produce()` starts the job via `/jobs/upload` and stores `active_job` + `active_job_started` in `st.session_state`, then returns immediately (script run ends in ~1s). A `@st.fragment(run_every=5)` (`_poll_active_job`) polls `/jobs/{id}` in short (~100 ms) requests that never approach the 900s limit. On `done` → sets `data`/`pack_token`, clears `active_job`, `st.rerun()` to show results. On `error` → `st.error`. On 404 → warning ("server restarted, retry").
+- **Live progress**: backend `_produce_audio` writes coarse progress via `_progress` dict threaded from `_submit_job` → `_process_pipeline` → `orchestrator.process_script` → `AudioProducerAgent.run/_produce_audio`. Stages: `queued → voices → voice N/T → music → sentiment → packaging → complete`. The fragment banner shows a `st.progress` bar with the current stage + elapsed time.
+- **Reconnect resilience**: `active_job` persists in session state, so a browser reconnect/reload resumes polling the same job instead of losing a 10+ min run.
+- **Instance affinity fix**: both `podcraft` and `podcraft-ui` deployed with `--max-instances=1` to guarantee jobs, packs, and `/download` links always resolve on the one warm instance. Eliminates silent 404 polls and broken download links.
+- **Video polling** still uses the old blocking `_poll_job()` (~70s, well under timeout); only the produce path was migrated to fragments.
+- **78 tests pass**. AppTest: 0 exceptions for default run, active_job with unreachable API, and results-present cases.
 
 ### Episode metadata (`src/episode_meta.py`) — v2, added 2026-08-19
 - `generate_episode_title(script_analysis, genre)` — one Gemini call, cached at `outputs/title_<token>.txt`; falls back to a heuristic title without keys.

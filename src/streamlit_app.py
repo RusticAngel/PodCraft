@@ -441,7 +441,8 @@ def _render_results(data: dict, pack_token: str) -> None:
         st.json(data)
 
 
-def _produce() -> None:
+def _start_produce() -> None:
+    """Start a produce job and store its id — non-blocking (no poll loop)."""
     try:
         job_id = _start_upload_job(
             st.session_state["file_bytes"],
@@ -453,14 +454,93 @@ def _produce() -> None:
             st.session_state.get("music_intensity"),
             st.session_state.get("duck_db"),
         )
-        body = _poll_job(job_id, timeout_s=1500, poll_s=3)
-        data = body.get("data") or {}
-        pack_url = body.get("download_url") or ""
-        st.session_state["data"] = data
+        st.session_state["active_job"] = job_id
+        st.session_state["active_job_kind"] = "produce"
+        st.session_state["active_job_started"] = time.time()
+    except Exception as e:
+        st.error(f"❌ Failed to start production: {e}")
+
+
+_STAGE_LABELS = {
+    "queued": "⏳ Queuing…",
+    "voices": "🎙️ Preparing voices…",
+    "music": "🎵 Scoring music bed…",
+    "sentiment": "🎭 Analysing sentiment…",
+    "packaging": "📦 Packaging…",
+    "complete": "✅ Done!",
+}
+
+
+@st.fragment(run_every=5)
+def _poll_active_job() -> None:
+    """Poll the running job and render a live progress banner.
+
+    Each invocation is a short server-side request (~100 ms) that
+    re-issues itself every 5 seconds until the job completes.  Because
+    the poll lives in a *fragment*, it never holds the main Streamlit
+    request open for the full produce duration — the Cloud Run 900 s
+    timeout is no longer a concern.
+    """
+    job_id = st.session_state.get("active_job")
+    if not job_id:
+        return
+
+    try:
+        resp = requests.get(f"{_api_base()}/jobs/{job_id}", timeout=10)
+    except Exception:
+        st.warning("⚠️ Network blip — retrying…")
+        return
+
+    if resp.status_code == 404:
+        st.session_state.pop("active_job", None)
+        st.session_state.pop("active_job_kind", None)
+        st.session_state.pop("active_job_started", None)
+        st.warning("⚠️ Production server restarted — your job was lost. Press Produce to retry.")
+        return
+
+    if resp.status_code != 200:
+        return
+
+    job = resp.json()
+    status = job.get("status")
+
+    if status == "done":
+        result = job.get("result") or {}
+        st.session_state["data"] = result.get("data") or {}
+        pack_url = result.get("download_url") or ""
         st.session_state["pack_token"] = pack_url.rsplit("/", 1)[-1].replace(
             "podcraft_pack_", "").replace(".zip", "")
-    except Exception as e:
-        st.error(f"❌ Production failed: {e}")
+        st.session_state.pop("active_job", None)
+        st.session_state.pop("active_job_kind", None)
+        st.session_state.pop("active_job_started", None)
+        st.rerun()
+        return
+
+    if status == "error":
+        st.session_state.pop("active_job", None)
+        st.session_state.pop("active_job_kind", None)
+        st.session_state.pop("active_job_started", None)
+        st.error(f"❌ Production failed: {job.get('error', 'Unknown error')}")
+        return
+
+    # Still running — render progress banner
+    progress = job.get("progress") or {}
+    stage = progress.get("stage", "queued")
+    done = progress.get("done", 0)
+    total = progress.get("total", 0)
+
+    elapsed = int(time.time() - st.session_state.get("active_job_started", time.time()))
+    elapsed_str = f"{elapsed // 60}m {elapsed % 60}s" if elapsed >= 60 else f"{elapsed}s"
+
+    # Progress percentage: voices are the bulk (0-90%), rest is fast (90-100%).
+    if total > 0 and "voice" in stage and "/" in stage:
+        pct = min(90, int(done / total * 90))
+    else:
+        pct = {"queued": 5, "voices": 10, "music": 91, "sentiment": 95,
+               "packaging": 98, "complete": 100}.get(stage, 50)
+
+    label = _STAGE_LABELS.get(stage) or f"🎙️ {stage}…"
+    st.progress(pct, text=f"{label}  ({elapsed_str})")
 
 
 def main() -> None:
@@ -600,13 +680,18 @@ def main() -> None:
         unsafe_allow_html=True,
     )
     if st.button("✨ Produce episode", type="primary", use_container_width=True,
-                 disabled=not st.session_state.get("file_name")):
-        _produce()
-    if not st.session_state.get("file_name"):
+                 disabled=(not st.session_state.get("file_name")
+                           or st.session_state.get("active_job"))):
+        _start_produce()
+    if not st.session_state.get("file_name") and not st.session_state.get("active_job"):
         st.markdown('<p class="hint" style="font-size:.8rem">Drop in a script to enable production.</p>',
                     unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
+
+    # Live progress banner (runs as a 5-second fragment, never holds the main request)
+    if st.session_state.get("active_job"):
+        _poll_active_job()
 
     # Results
     if st.session_state.get("data") and st.session_state.get("pack_token"):

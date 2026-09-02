@@ -57,22 +57,30 @@ _JOBS_LOCK = threading.Lock()
 
 
 def _submit_job(kind: str, fn, token: str = None) -> str:
-    """Register a background job and run it on a daemon thread."""
+    """Register a background job and run it on a daemon thread.
+
+    ``fn`` receives a mutable ``progress`` dict it can update in-place for
+    coarse status reporting (e.g. ``{"stage": "voice 2/3", "done": 2, "total": 4}``).
+    """
     job_id = uuid.uuid4().hex
+    progress = {"stage": "queued", "done": 0, "total": 0}
     with _JOBS_LOCK:
         _JOBS[job_id] = {"id": job_id, "kind": kind, "status": "running",
-                         "result": None, "error": None, "token": token}
+                         "result": None, "error": None, "token": token,
+                         "progress": progress}
 
     def _run():
         try:
-            result = fn()
+            result = fn(progress)
             with _JOBS_LOCK:
                 _JOBS[job_id]["result"] = result
                 _JOBS[job_id]["status"] = "done"
+                progress["stage"] = "complete"
         except Exception as e:
             with _JOBS_LOCK:
                 _JOBS[job_id]["error"] = str(e)
                 _JOBS[job_id]["status"] = "error"
+                progress["stage"] = "error"
 
     threading.Thread(target=_run, daemon=True).start()
     return job_id
@@ -83,7 +91,11 @@ def _get_job(job_id: str) -> dict:
         job = _JOBS.get(job_id)
         if not job:
             raise HTTPException(404, f"Job not found: {job_id}")
-        return dict(job)
+        out = dict(job)
+    # shallow copy is fine; progress is a small dict updated atomically
+    if "progress" in out:
+        out["progress"] = dict(out["progress"])
+    return out
 
 
 def get_orchestrator() -> PodcastOrchestrator:
@@ -106,7 +118,8 @@ def _process_pipeline(upload_path: str, genre: str, max_segments: Optional[int],
                       voice_overrides: Optional[dict] = None,
                       music_mood: Optional[str] = None,
                       music_intensity: Optional[float] = None,
-                      duck_db: Optional[int] = None) -> dict:
+                      duck_db: Optional[int] = None,
+                      progress: dict = None) -> dict:
     """Run the full production pipeline and return the /upload response body.
 
     Extracted from the endpoint so both sync and background/job flows share
@@ -117,6 +130,7 @@ def _process_pipeline(upload_path: str, genre: str, max_segments: Optional[int],
     result = orchestrator.process_script(
         upload_path, genre, max_segments, voice_overrides,
         music_mood=music_mood, music_intensity=music_intensity, duck_db=duck_db,
+        progress=progress,
     )
 
     for entry in (result.get("audio_production") or {}).get("audio_files") or []:
@@ -332,9 +346,10 @@ def start_upload_job(
         overrides = _parse_voice_overrides(voice_overrides)
         job_id = _submit_job(
             "upload",
-            lambda: _process_pipeline(
+            lambda p: _process_pipeline(
                 upload_path, genre, max_segments, overrides,
                 music_mood=music_mood, music_intensity=music_intensity, duck_db=duck_db,
+                progress=p,
             ),
         )
         return {"status": "started", "job_id": job_id}
@@ -352,7 +367,7 @@ def start_video_job(
     """Start video generation as a background job; returns a job id to poll."""
     try:
         _find_pack(token)  # validate early
-        job_id = _submit_job("video", lambda: _run_video_job(token, title), token=token)
+        job_id = _submit_job("video", lambda _p: _run_video_job(token, title), token=token)
         return {"status": "started", "job_id": job_id}
     except HTTPException:
         raise
