@@ -463,6 +463,9 @@ def _start_produce() -> None:
 
 _STAGE_LABELS = {
     "queued": "⏳ Queuing…",
+    "parsing": "📄 Parsing script…",
+    "directing": "🗂️ Director's notes…",
+    "researching": "🔍 Market research…",
     "voices": "🎙️ Preparing voices…",
     "music": "🎵 Scoring music bed…",
     "sentiment": "🎭 Analysing sentiment…",
@@ -536,7 +539,8 @@ def _poll_active_job() -> None:
     if total > 0 and "voice" in stage and "/" in stage:
         pct = min(90, int(done / total * 90))
     else:
-        pct = {"queued": 5, "voices": 10, "music": 91, "sentiment": 95,
+        pct = {"queued": 2, "parsing": 5, "directing": 10, "researching": 15,
+               "voices": 20, "music": 91, "sentiment": 95,
                "packaging": 98, "complete": 100}.get(stage, 50)
 
     label = _STAGE_LABELS.get(stage) or f"🎙️ {stage}…"

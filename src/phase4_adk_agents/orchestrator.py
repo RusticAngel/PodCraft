@@ -47,16 +47,24 @@ class PodcastOrchestrator:
         os.makedirs("./uploads", exist_ok=True)
         os.makedirs("./outputs", exist_ok=True)
 
+        if progress is not None:
+            progress.update({"stage": "parsing", "done": 0, "total": 0})
         print("\U0001f4c4 Step 1: Parsing PDF script...")
         script_data = self.parser.parse(pdf_path)
         script_data["genre"] = genre
 
+        if progress is not None:
+            progress.update({"stage": "directing", "done": 0, "total": 0})
         print("\U0001f3ac Step 2: Director analyzing script...")
         director_analysis = self.director.run(script_data)
 
+        if progress is not None:
+            progress.update({"stage": "researching", "done": 0, "total": 0})
         print("\U0001f50d Step 3: Researcher gathering market data...")
         research = self.researcher.run(script_data, director_analysis)
 
+        if progress is not None:
+            progress.update({"stage": "voices", "done": 0, "total": 0})
         print("\U0001f3b5 Step 4: Producer generating audio...")
         audio_output = self.producer.run(
             script_data, director_analysis, max_segments, voice_overrides,
