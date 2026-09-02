@@ -681,7 +681,7 @@ def main() -> None:
     )
     if st.button("✨ Produce episode", type="primary", use_container_width=True,
                  disabled=(not st.session_state.get("file_name")
-                           or st.session_state.get("active_job"))):
+                           or bool(st.session_state.get("active_job")))):
         _start_produce()
     if not st.session_state.get("file_name") and not st.session_state.get("active_job"):
         st.markdown('<p class="hint" style="font-size:.8rem">Drop in a script to enable production.</p>',
