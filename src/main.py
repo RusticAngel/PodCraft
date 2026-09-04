@@ -119,12 +119,15 @@ def _process_pipeline(upload_path: str, genre: str, max_segments: Optional[int],
                       music_mood: Optional[str] = None,
                       music_intensity: Optional[float] = None,
                       duck_db: Optional[int] = None,
+                      render_video: bool = True,
+                      video_captions: bool = True,
                       progress: dict = None) -> dict:
     """Run the full production pipeline and return the /upload response body.
 
     Extracted from the endpoint so both sync and background/job flows share
     one implementation. Music controls (mood/intensity/duck) come from the
-    Studio UI and flow into the bed + video mix.
+    Studio UI and flow into the bed + video mix. render_video / video_captions
+    mirror the podcast-perfect Studio toggle.
     """
     orchestrator = get_orchestrator()
     result = orchestrator.process_script(
@@ -145,13 +148,31 @@ def _process_pipeline(upload_path: str, genre: str, max_segments: Optional[int],
     if meta.get("cover_path"):
         _add_to_pack(pack_path, meta["cover_path"])
 
-    return {
+    # Optionally render a video episode (talking-heads MP4).
+    video_url = None
+    if render_video:
+        try:
+            video_result = _run_video_job(
+                os.path.basename(pack_path).replace("podcraft_pack_", "").replace(".zip", ""),
+                title=meta.get("title"),
+            )
+            video_url = video_result.get("video_url")
+            result["video_url"] = video_url
+            result["video_mp3_url"] = video_result.get("mp3_url")
+            result["video_srt_url"] = video_result.get("srt_url")
+        except Exception as e:
+            result["video_error"] = f"Video rendering failed: {e}"
+
+    resp = {
         "status": "success",
         "data": result,
         "message": "Podcast production complete!",
         "download_url": f"/download/{os.path.basename(pack_path)}",
         "pack_token": os.path.basename(pack_path).replace("podcraft_pack_", "").replace(".zip", ""),
     }
+    if video_url:
+        resp["video_url"] = video_url
+    return resp
 
 
 def _run_video_job(token: str, title: str = None) -> dict:
@@ -305,6 +326,8 @@ def upload_script(
     duck_db: Optional[int] = Query(
         None, ge=-40, le=0, description="Music ducking under dialogue in dB (0..-40)"
     ),
+    render_video: bool = Query(True, description="Render a talking-heads MP4 after audio production"),
+    video_captions: bool = Query(True, description="Burn dialogue captions into the video"),
 ):
     """Upload a podcast script (PDF, TXT, MD or DOCX) and run the full pipeline synchronously."""
     try:
@@ -314,6 +337,7 @@ def upload_script(
         return JSONResponse(_process_pipeline(
             upload_path, genre, max_segments, overrides,
             music_mood=music_mood, music_intensity=music_intensity, duck_db=duck_db,
+            render_video=render_video, video_captions=video_captions,
         ))
     except HTTPException:
         raise
@@ -338,6 +362,8 @@ def start_upload_job(
     duck_db: Optional[int] = Query(
         None, ge=-40, le=0, description="Music ducking under dialogue in dB (0..-40)"
     ),
+    render_video: bool = Query(True, description="Render a talking-heads MP4 after audio production"),
+    video_captions: bool = Query(True, description="Burn dialogue captions into the video"),
 ):
     """Start the full pipeline as a background job; returns a job id to poll."""
     try:
@@ -349,6 +375,7 @@ def start_upload_job(
             lambda p: _process_pipeline(
                 upload_path, genre, max_segments, overrides,
                 music_mood=music_mood, music_intensity=music_intensity, duck_db=duck_db,
+                render_video=render_video, video_captions=video_captions,
                 progress=p,
             ),
         )

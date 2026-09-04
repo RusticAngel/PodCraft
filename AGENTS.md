@@ -163,6 +163,15 @@ Mirrors the "Episode Studio" prototype (`github.com/RusticAngel/podcast-perfect`
 - **Tests: 71 pass** (2026-08-29) — `test_vibe_mapper.py` (9; moods test asserts selector default `DEFAULT_MOOD == "auto"`, genre→mood is a hint), `test_api_endpoints.py` + vibes/voices + music param threading. Full suite ~6 min (job tests run the REAL pipeline: cached TTS + placeholder bed + one Lyria 429 attempt each).
 - **Container gotcha (fixed c902c9a)**: `streamlit run src/streamlit_app.py` only puts `/app/src` (the script dir) on `sys.path`, so `from src.…` imports crashed on Cloud Run (`ModuleNotFoundError: No module named 'src'`, line 27). Fixed via `ENV PYTHONPATH=/app` in the Dockerfile (before `COPY`). Locally it works because cwd is on the path. Keep `PYTHONPATH=/app` if anything reworks the Dockerfile.
 
+### Auto-detect speakers + voice casting + video toggle (added 2026-09-04)
+Ported from podcast-perfect's frontend patterns (Sep 4 commits `c169a7e` etc.).
+- **Auto-detect speakers on upload**: When a file is uploaded in the Streamlit UI, it immediately POSTs to `/analyze` and populates the speakers list. No button click needed. New file bytes trigger re-detection.
+- **Prominent voice casting (Step 3)**: Per-speaker voice dropdowns moved from the Advanced expander to a visible Step 3 "Cast the voices" in the main form. Uses `recommend_for_role()` for smart defaults. Voice overrides flow to `/jobs/upload` as before.
+- **Video toggle**: `render_video` + `video_captions` boolean toggles added to the form (Step 4 "Music & mix"). These are passed as query params to `/jobs/upload`.
+- **Backend**: `POST /upload` and `POST /jobs/upload` accept `render_video` (default True) and `video_captions` (default True). `_process_pipeline` generates video after audio if `render_video` is True, appends to pack, includes `video_url` in response.
+- **Results**: Video panel shows inline if generated during produce (no separate "Generate video" button needed). Fallback "Generate video" button still available if video wasn't generated.
+- **78 tests pass**.
+
 ## Tests (all mocked, no keys)
 - `tests/test_pdf_parser.py` — parsing, dialogue segments, duration, ScriptAnalyzer, SpeakerIdentifier voice/role assignment
 - `tests/test_agents.py` — Director/Researcher/Producer fallbacks, orchestration E2E via `build_pdf`, placeholder WAV

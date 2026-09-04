@@ -262,7 +262,8 @@ def _poll_job(job_id: str, timeout_s: int = 1200, poll_s: int = 3) -> dict:
 
 
 def _start_upload_job(file_bytes, name, genre, max_segments, voice_overrides,
-                      music_mood, music_intensity, duck_db):
+                      music_mood, music_intensity, duck_db,
+                      render_video=True, video_captions=True):
     files = {"file": (name, file_bytes, _mime_for(name))}
     params = {"genre": genre}
     if max_segments:
@@ -275,6 +276,8 @@ def _start_upload_job(file_bytes, name, genre, max_segments, voice_overrides,
         params["music_intensity"] = music_intensity
     if duck_db is not None:
         params["duck_db"] = duck_db
+    params["render_video"] = str(render_video).lower()
+    params["video_captions"] = str(video_captions).lower()
     resp = requests.post(f"{_api_base()}/jobs/upload", files=files, params=params, timeout=60)
     resp.raise_for_status()
     return resp.json()["job_id"]
@@ -360,6 +363,22 @@ def _render_results(data: dict, pack_token: str) -> None:
             st.markdown(f'<div class="panel-box"><p class="panel-title">{icon} {title}</p>{body_html}</div>',
                         unsafe_allow_html=True)
 
+        # Video panel (if generated during produce)
+        video_url = data.get("video_url")
+        if video_url:
+            st.markdown(
+                f'<div class="panel-box"><p class="panel-title">🎬 Video podcast</p>',
+                unsafe_allow_html=True,
+            )
+            st.video(f"{_api_base()}{video_url}")
+            st.markdown(
+                f'<a href="{_api_base()}{video_url}" style="font-size:.85rem">⬇️ Download video (MP4)</a>',
+                unsafe_allow_html=True,
+            )
+            st.markdown("</div>", unsafe_allow_html=True)
+        elif data.get("video_error"):
+            _panel("Video podcast", "🎬", f'<p class="episode-meta">{data["video_error"]}</p>')
+
         music = audio.get("music_path")
         if music:
             name = os.path.basename(os.path.normpath(music))
@@ -424,18 +443,19 @@ def _render_results(data: dict, pack_token: str) -> None:
         )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    if st.button("🎬 Generate video (MP4)", type="primary"):
-        try:
-            job_id = _start_video_job(pack_token)
-            v = _poll_job(job_id, timeout_s=1800, poll_s=5)
-            st.success("Video ready!")
-            st.video(f"{_api_base()}{v['video_url']}")
-            a, b, c = st.columns(3)
-            a.markdown(f'<a href="{_api_base()}{v["video_url"]}">⬇️ MP4</a>', unsafe_allow_html=True)
-            b.markdown(f'<a href="{_api_base()}{v["mp3_url"]}">⬇️ MP3</a>', unsafe_allow_html=True)
-            c.markdown(f'<a href="{_api_base()}{v["srt_url"]}">⬇️ SRT</a>', unsafe_allow_html=True)
-        except Exception as e:
-            st.error(f"Video generation failed: {e}")
+    if not data.get("video_url"):
+        if st.button("🎬 Generate video (MP4)", type="primary"):
+            try:
+                job_id = _start_video_job(pack_token)
+                v = _poll_job(job_id, timeout_s=1800, poll_s=5)
+                st.success("Video ready!")
+                st.video(f"{_api_base()}{v['video_url']}")
+                a, b, c = st.columns(3)
+                a.markdown(f'<a href="{_api_base()}{v["video_url"]}">⬇️ MP4</a>', unsafe_allow_html=True)
+                b.markdown(f'<a href="{_api_base()}{v["mp3_url"]}">⬇️ MP3</a>', unsafe_allow_html=True)
+                c.markdown(f'<a href="{_api_base()}{v["srt_url"]}">⬇️ SRT</a>', unsafe_allow_html=True)
+            except Exception as e:
+                st.error(f"Video generation failed: {e}")
 
     with st.expander("Full production report (JSON)"):
         st.json(data)
@@ -453,6 +473,8 @@ def _start_produce() -> None:
             st.session_state.get("music_mood", "auto"),
             st.session_state.get("music_intensity"),
             st.session_state.get("duck_db"),
+            render_video=st.session_state.get("render_video", True),
+            video_captions=st.session_state.get("video_captions", True),
         )
         st.session_state["active_job"] = job_id
         st.session_state["active_job_kind"] = "produce"
@@ -576,9 +598,23 @@ def main() -> None:
         "Script file (PDF, TXT, MD, DOCX)", type=UPLOAD_EXTS, label_visibility="collapsed",
     )
     if uploaded is not None:
-        st.session_state["file_bytes"] = uploaded.getvalue()
+        new_bytes = uploaded.getvalue()
+        old_bytes = st.session_state.get("file_bytes")
+        st.session_state["file_bytes"] = new_bytes
         st.session_state["file_name"] = uploaded.name
-        st.session_state.pop("data", None)
+        # Auto-detect speakers when a new file is uploaded
+        if new_bytes != old_bytes:
+            st.session_state.pop("data", None)
+            st.session_state.pop("speakers", None)
+            try:
+                with st.spinner("Reading script for speakers…"):
+                    files = {"file": (uploaded.name, new_bytes, _mime_for(uploaded.name))}
+                    resp = requests.post(f"{_api_base()}/analyze", files=files, timeout=120)
+                    resp.raise_for_status()
+                    script = resp.json().get("script_analysis") or {}
+                st.session_state["speakers"] = script.get("speakers") or []
+            except Exception:
+                st.session_state["speakers"] = []
     demo_path = None
     if not st.session_state.get("file_name"):
         demos = st.columns(len(DEMOS))
@@ -603,9 +639,42 @@ def main() -> None:
     choice = st.selectbox("Vibe", options, index=default_index, label_visibility="collapsed")
     st.session_state["vibe_id"] = vibe_by_label(choice)["id"]
 
-    # Step 3 — music & mix
+    # Step 3 — cast the voices (auto-detected speakers)
     st.markdown('<hr class="rule"/>', unsafe_allow_html=True)
     st.markdown('<div class="step-row"><span class="step-num">3</span>'
+                '<p class="step-title">Cast the voices</p></div>', unsafe_allow_html=True)
+    speakers = st.session_state.get("speakers") or []
+    if speakers:
+        labels = voice_labels()
+        overrides, used = {}, []
+        cols = st.columns(min(2, len(speakers)))
+        for i, speaker in enumerate(speakers):
+            with cols[i % len(cols)]:
+                suggested = recommend_for_role(speaker, used)
+                default_idx = labels.index(next(
+                    l for l in labels if l.split("—")[0].strip().endswith(suggested)))
+                chosen = voice_by_label(st.selectbox(
+                    speaker, labels, index=default_idx, key=f"voice_{i}",
+                    label_visibility="collapsed"))
+                overrides[speaker] = chosen
+                used.append(chosen)
+        st.session_state["voice_overrides"] = overrides
+    elif st.session_state.get("file_name"):
+        st.markdown(
+            '<p class="hint" style="font-size:.85rem;color:var(--muted-fg)">'
+            'No speakers detected — the studio will auto-cast voices.</p>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<p class="hint" style="font-size:.85rem;color:var(--muted-fg)">'
+            'Add a script and the speakers will appear here for casting.</p>',
+            unsafe_allow_html=True,
+        )
+
+    # Step 4 — music & mix
+    st.markdown('<hr class="rule"/>', unsafe_allow_html=True)
+    st.markdown('<div class="step-row"><span class="step-num">4</span>'
                 '<p class="step-title">Music &amp; mix</p></div>', unsafe_allow_html=True)
     col_mood, col_sliders = st.columns(2, gap="large")
     with col_mood:
@@ -634,44 +703,33 @@ def main() -> None:
                          format="%d dB", help="More negative = music barely there")
         st.session_state["duck_db"] = duck
 
-    # Optional advanced: lite segments + per-speaker voices
-    with st.expander("⚙️ Advanced — segments & voices"):
+    # Video toggle
+    st.markdown(
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;'
+        'margin-top:.6rem;padding:.6rem .8rem;border:1px solid var(--border);border-radius:.8rem;'
+        'background:color-mix(in srgb, var(--panel) 60%, transparent)">'
+        '<div><span style="font-size:.85rem;font-weight:600">Render video podcast</span>'
+        '<p style="font-size:.75rem;color:var(--muted-fg);margin:0">Talking-heads MP4 that '
+        'switches to whoever is speaking</p></div></div>',
+        unsafe_allow_html=True,
+    )
+    vc1, vc2 = st.columns(2)
+    with vc1:
+        st.session_state.setdefault("render_video", True)
+        render_video = st.toggle("Enable video", value=st.session_state["render_video"],
+                                 key="render_video_toggle")
+        st.session_state["render_video"] = render_video
+    with vc2:
+        st.session_state.setdefault("video_captions", True)
+        video_captions = st.toggle("Burn in captions", value=st.session_state["video_captions"],
+                                   key="video_captions_toggle")
+        st.session_state["video_captions"] = video_captions
+
+    # Advanced: lite segments only
+    with st.expander("⚙️ Advanced — quota control"):
         max_segments = st.slider("Render segments (lite quota mode)", 1, 12, 12,
                                  help="Caps the number of TTS segments; free tier allows ~10/day.")
         st.session_state["max_segments"] = max_segments
-
-        if st.button("🔍 Detect speakers & choose voices"):
-            try:
-                with st.spinner("Reading the script…"):
-                    files = {"file": (
-                        st.session_state["file_name"],
-                        st.session_state["file_bytes"],
-                        _mime_for(st.session_state["file_name"]),
-                    )}
-                    resp = requests.post(f"{_api_base()}/analyze", files=files, timeout=120)
-                    resp.raise_for_status()
-                    script = resp.json().get("script_analysis") or {}
-                st.session_state["speakers"] = script.get("speakers") or []
-                st.session_state.pop("data", None)
-            except Exception as e:
-                st.error(f"❌ Analysis failed: {e}")
-
-        if st.session_state.get("speakers"):
-            st.markdown("**Voices per speaker** (auto-cast if left unchanged)")
-            labels = voice_labels()
-            overrides, used = {}, []
-            cols = st.columns(min(2, len(st.session_state["speakers"])))
-            for i, speaker in enumerate(st.session_state["speakers"]):
-                with cols[i % len(cols)]:
-                    suggested = recommend_for_role(speaker, used)
-                    default_idx = labels.index(next(
-                        l for l in labels if l.split("—")[0].strip().endswith(suggested)))
-                    chosen = voice_by_label(st.selectbox(
-                        speaker, labels, index=default_idx, key=f"voice_{i}",
-                        label_visibility="collapsed"))
-                    overrides[speaker] = chosen
-                    used.append(chosen)
-            st.session_state["voice_overrides"] = overrides
 
     # Footer + CTA
     mood_label, _ = mood_label_with_hint(st.session_state["music_mood"])
