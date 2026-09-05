@@ -1,4 +1,4 @@
-# 🎙️ PodCraft — Podcast-to-Production Agent
+# 🎙️ PodCraft — AI Podcast Production Agent
 
 ## Google Cloud Agentic Cinema Hackathon Submission
 

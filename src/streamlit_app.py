@@ -296,7 +296,7 @@ def _header() -> None:
         st.markdown('<div class="logo-tile">🎙️</div>', unsafe_allow_html=True)
     with c2:
         st.markdown(
-            '<p class="eyebrow">Podcast-to-Production</p>'
+            '<p class="eyebrow">Podcraft</p>'
             '<p class="stage-title">Episode Studio</p>',
             unsafe_allow_html=True,
         )
@@ -571,7 +571,7 @@ def _poll_active_job() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Episode Studio | Podcast-to-Production", page_icon="🎙️",
+    st.set_page_config(page_title="Episode Studio | Podcraft", page_icon="🎙️",
                        layout="centered", initial_sidebar_state="collapsed")
     _inject_theme()
 

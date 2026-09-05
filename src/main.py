@@ -19,7 +19,7 @@ from src.video_generator import generate_video_from_pack
 from src.episode_meta import generate_episode_title, generate_cover_art
 
 app = FastAPI(
-    title="PodCraft - Podcast-to-Production Agent",
+    title="PodCraft",
     description="Multi-agent system for automated podcast production",
     version="1.0.0",
 )
