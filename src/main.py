@@ -152,6 +152,8 @@ def _process_pipeline(upload_path: str, genre: str, max_segments: Optional[int],
     video_url = None
     if render_video:
         try:
+            if progress is not None:
+                progress["stage"] = "video"
             video_result = _run_video_job(
                 os.path.basename(pack_path).replace("podcraft_pack_", "").replace(".zip", ""),
                 title=meta.get("title"),
@@ -160,8 +162,13 @@ def _process_pipeline(upload_path: str, genre: str, max_segments: Optional[int],
             result["video_url"] = video_url
             result["video_mp3_url"] = video_result.get("mp3_url")
             result["video_srt_url"] = video_result.get("srt_url")
+            if result.get("video_error"):
+                result.pop("video_error")
         except Exception as e:
+            # Never lose the audio production. Surface the failure clearly
+            # so the UI can show an inline warning instead of a silent hang.
             result["video_error"] = f"Video rendering failed: {e}"
+            video_url = None
 
     resp = {
         "status": "success",

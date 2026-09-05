@@ -289,7 +289,10 @@ class PodCraftVideoGenerator:
 
         alpha = overlay[..., 3:4].astype(np.float32) / 255.0
         rgb = overlay[..., :3].astype(np.float32)
-        return (base.astype(np.float32) * (1 - alpha) + rgb * alpha).astype(np.uint8)
+        bg = base.astype(np.float32)
+        bg *= (1.0 - alpha)
+        bg += rgb * alpha
+        return bg.astype(np.uint8)
 
     def _segment_plan(self, timed: List, total: float) -> List[Dict]:
         """Expand timed segments into render-ready entries with colors + x-range.
@@ -468,8 +471,8 @@ class PodCraftVideoGenerator:
             codec="libx264",
             audio_codec="aac",
             fps=FPS,
-            preset="veryfast",
-            threads=4,
+            preset="ultrafast",
+            threads=1,
             logger=None,
         )
         video.close()

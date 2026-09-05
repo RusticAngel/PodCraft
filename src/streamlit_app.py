@@ -492,6 +492,7 @@ _STAGE_LABELS = {
     "music": "🎵 Scoring music bed…",
     "sentiment": "🎭 Analysing sentiment…",
     "packaging": "📦 Packaging…",
+    "video": "🎬 Rendering video…",
     "complete": "✅ Done!",
 }
 
@@ -563,7 +564,7 @@ def _poll_active_job() -> None:
     else:
         pct = {"queued": 2, "parsing": 5, "directing": 10, "researching": 15,
                "voices": 20, "music": 91, "sentiment": 95,
-               "packaging": 98, "complete": 100}.get(stage, 50)
+               "packaging": 98, "video": 99, "complete": 100}.get(stage, 50)
 
     label = _STAGE_LABELS.get(stage) or f"🎙️ {stage}…"
     st.progress(pct, text=f"{label}  ({elapsed_str})")
