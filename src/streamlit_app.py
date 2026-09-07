@@ -168,7 +168,10 @@ div[data-baseweb="popover"] li {{ color: var(--fg); }}
 .stButton > button[kind="primary"]:hover, .stDownloadButton > button[kind="primary"]:hover {{
   filter: brightness(1.06); box-shadow: var(--shadow-stage);
 }}
-.studio-card button[data-testid="stBaseButton-primary"] {{
+button[data-testid="stBaseButton-primary"] {{
+  color: #000 !important;
+}}
+button[data-testid="stBaseButton-primary"] * {{
   color: #000 !important;
 }}
 
