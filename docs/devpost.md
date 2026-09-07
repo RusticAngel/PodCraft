@@ -54,3 +54,7 @@ PodCraft replaces that manual pipeline with an agentic system. Upload a script o
 - GitHub Repo: https://github.com/RusticAngel/PodCraft
 - Live Demo URL (Cloud Run): https://podcraft-347254432482.us-central1.run.app
 - Demo Video: _add YouTube link here_
+
+## Demo & Quota Note
+
+The live demo runs on the Gemini TTS free tier (10 requests/day). If a re-run fails, the daily quota may be exhausted — try again the next day, or run locally with your own API key. Repeated productions reuse cached audio (zero quota), and the UI's lite-mode `max_segments` slider caps how many segments are rendered per run.

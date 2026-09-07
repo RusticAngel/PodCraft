@@ -583,6 +583,7 @@ def main() -> None:
         st.stop()
 
     _header()
+    st.warning("⚠️ Live demo uses free-tier TTS (10 requests/day). If this fails, quota may be exhausted — try again tomorrow.")
     st.markdown(
         '<p class="hero-text">Drop in a script. The studio reads it, writes '
         "director's notes, checks the market, casts AI voices, scores a music bed "

@@ -183,6 +183,8 @@ All tests are mocked and require no API keys.
 
 The service is deployed on Cloud Run: https://podcraft-347254432482.us-central1.run.app
 
+⚠️ **Demo Note:** The live demo uses the Gemini TTS free tier (10 requests/day). If the demo fails on a second run, the quota has been exhausted. Please try again the next day, or clone the repository and run locally with your own API key. Repeated runs with the same script reuse cached audio (zero quota), and the lite-mode `max_segments` slider caps how many dialogue segments are rendered.
+
 ### License
 
 Apache 2.0
